@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { GROUP_SLOTS } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
 type TeacherSummary = {
@@ -15,6 +16,15 @@ type TeacherSummary = {
   extraMinutes: number
   workingDays: number
   records: Attendance[]
+}
+
+type EditState = {
+  id: string
+  date: string
+  lessonType: '個別指導' | '集団授業'
+  periods: number
+  slots: string[]
+  extraMinutes: string
 }
 
 function currentMonth() {
@@ -36,6 +46,8 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [edit, setEdit] = useState<EditState | null>(null)
 
   useEffect(() => {
     const saved = localStorage.getItem('juku_teacher')
@@ -81,6 +93,67 @@ export default function AdminPage() {
 
     setSummaries(result)
     setLoading(false)
+  }
+
+  const openEdit = (r: Attendance) => {
+    setEdit({
+      id: r.id,
+      date: r.date,
+      lessonType: r.lesson_type as '個別指導' | '集団授業',
+      periods: r.periods,
+      slots: r.notes ? r.notes.split('').filter((c) => ['①','②','③','④','⑤'].includes(c)) : [],
+      extraMinutes: String(r.extra_minutes ?? 0),
+    })
+  }
+
+  const toggleEditSlot = (label: string) => {
+    if (!edit) return
+    setEdit((prev) => {
+      if (!prev) return prev
+      const slots = prev.slots.includes(label)
+        ? prev.slots.filter((s) => s !== label)
+        : [...prev.slots, label]
+      return { ...prev, slots }
+    })
+  }
+
+  const saveEdit = async () => {
+    if (!edit) return
+    setSaving(true)
+
+    const extra = parseInt(edit.extraMinutes) || 0
+    let updateData: Record<string, unknown>
+
+    if (edit.lessonType === '個別指導') {
+      updateData = {
+        date: edit.date,
+        lesson_type: '個別指導',
+        periods: edit.periods,
+        start_time: null,
+        end_time: null,
+        extra_minutes: extra,
+        notes: null,
+      }
+    } else {
+      if (edit.slots.length === 0) { setSaving(false); return }
+      const sorted = [...edit.slots].sort()
+      const first = GROUP_SLOTS.find((s) => s.label === sorted[0])!
+      const last = GROUP_SLOTS.find((s) => s.label === sorted[sorted.length - 1])!
+      updateData = {
+        date: edit.date,
+        lesson_type: '集団授業',
+        periods: edit.slots.length,
+        start_time: first.start,
+        end_time: last.end,
+        extra_minutes: extra,
+        notes: sorted.join(''),
+      }
+    }
+
+    await supabase.from('itoshima_attendances').update(updateData).eq('id', edit.id)
+    setSaving(false)
+    setEdit(null)
+    fetchData()
   }
 
   const handleDelete = async (recordId: string) => {
@@ -138,11 +211,14 @@ export default function AdminPage() {
                 {/* サマリー行 */}
                 <button
                   className="w-full px-5 py-4 flex items-center gap-3 text-left"
-                  onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
+                  onClick={() => {
+                    setExpandedId(expandedId === s.id ? null : s.id)
+                    setEdit(null)
+                  }}
                 >
                   <div className="flex-1">
                     <p className="font-bold text-gray-800">{s.name}</p>
-                    <div className="flex gap-4 mt-1.5 text-sm">
+                    <div className="flex flex-wrap gap-3 mt-1.5 text-sm">
                       <span className="text-gray-500">個別 <span className="font-bold text-gray-800">{s.individualPeriods}</span>コマ</span>
                       <span className="text-gray-500">集団 <span className="font-bold text-gray-800">{s.groupPeriods}</span>コマ</span>
                       <span className="text-gray-500">勤務 <span className="font-bold text-gray-800">{s.workingDays}</span>日</span>
@@ -169,30 +245,167 @@ export default function AdminPage() {
                       <p className="text-center text-gray-400 py-4 text-sm">記録がありません</p>
                     ) : (
                       s.records.map((r) => (
-                        <div key={r.id} className="flex items-center gap-3 px-5 py-3 border-b border-gray-50 last:border-0">
-                          <div className="flex-1">
-                            <span className="text-sm font-medium text-gray-700">{formatDate(r.date)}</span>
-                            <span
-                              className="ml-2 text-xs px-2 py-0.5 rounded-full"
-                              style={{ backgroundColor: r.lesson_type === '個別指導' ? '#FFF0E0' : '#FFF0F0', color: '#CC5500' }}
-                            >
-                              {r.lesson_type}
-                            </span>
-                            <span className="ml-2 text-sm text-gray-600">
-                              {r.lesson_type === '集団授業' && r.notes ? `${r.notes} ` : ''}
-                              {r.periods}コマ
-                            </span>
-                            {(r.extra_minutes ?? 0) > 0 && (
-                              <span className="ml-1 text-xs text-gray-400">＋{r.extra_minutes}分</span>
-                            )}
-                          </div>
-                          <button
-                            onClick={() => handleDelete(r.id)}
-                            disabled={deletingId === r.id}
-                            className="text-xs text-red-400 border border-red-200 px-2.5 py-1 rounded-lg disabled:opacity-40"
-                          >
-                            {deletingId === r.id ? '削除中' : '削除'}
-                          </button>
+                        <div key={r.id}>
+                          {/* 通常表示行 */}
+                          {edit?.id !== r.id && (
+                            <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-50 last:border-0">
+                              <div className="flex-1 min-w-0">
+                                <span className="text-sm font-medium text-gray-700">{formatDate(r.date)}</span>
+                                <span
+                                  className="ml-2 text-xs px-2 py-0.5 rounded-full"
+                                  style={{ backgroundColor: '#FFF0E0', color: '#CC5500' }}
+                                >
+                                  {r.lesson_type}
+                                </span>
+                                <span className="ml-2 text-sm text-gray-600">
+                                  {r.lesson_type === '集団授業' && r.notes ? `${r.notes} ` : ''}
+                                  {r.periods}コマ
+                                </span>
+                                {(r.extra_minutes ?? 0) > 0 && (
+                                  <span className="ml-1 text-xs text-gray-400">＋{r.extra_minutes}分</span>
+                                )}
+                              </div>
+                              <button
+                                onClick={() => openEdit(r)}
+                                className="text-xs border px-2.5 py-1 rounded-lg shrink-0"
+                                style={{ color: '#FF7F00', borderColor: '#FF7F00' }}
+                              >
+                                編集
+                              </button>
+                              <button
+                                onClick={() => handleDelete(r.id)}
+                                disabled={deletingId === r.id}
+                                className="text-xs text-red-400 border border-red-200 px-2.5 py-1 rounded-lg disabled:opacity-40 shrink-0"
+                              >
+                                {deletingId === r.id ? '削除中' : '削除'}
+                              </button>
+                            </div>
+                          )}
+
+                          {/* 編集フォーム */}
+                          {edit?.id === r.id && (
+                            <div className="px-5 py-4 border-b border-gray-100 bg-orange-50 flex flex-col gap-4">
+
+                              {/* 勤務日 */}
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">勤務日</label>
+                                <input
+                                  type="date"
+                                  value={edit.date}
+                                  onChange={(e) => setEdit({ ...edit, date: e.target.value })}
+                                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#FF7F00]"
+                                />
+                              </div>
+
+                              {/* 授業種類 */}
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">授業の種類</label>
+                                <div className="flex gap-2">
+                                  {(['個別指導', '集団授業'] as const).map((type) => (
+                                    <button
+                                      key={type}
+                                      type="button"
+                                      onClick={() => setEdit({ ...edit, lessonType: type, slots: [], periods: 0 })}
+                                      className="px-4 py-2 rounded-lg text-sm font-medium border-2 transition-colors"
+                                      style={
+                                        edit.lessonType === type
+                                          ? { backgroundColor: '#FF7F00', borderColor: '#FF7F00', color: 'white' }
+                                          : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#4b5563' }
+                                      }
+                                    >
+                                      {type}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* 個別指導：コマ数 */}
+                              {edit.lessonType === '個別指導' && (
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600 mb-1">コマ数</label>
+                                  <div className="flex gap-2">
+                                    {[0, 1, 2, 3, 4, 5].map((n) => (
+                                      <button
+                                        key={n}
+                                        type="button"
+                                        onClick={() => setEdit({ ...edit, periods: n })}
+                                        className="w-10 py-2 rounded-lg text-base font-bold border-2 transition-colors"
+                                        style={
+                                          edit.periods === n
+                                            ? { backgroundColor: '#FF7F00', borderColor: '#FF7F00', color: 'white' }
+                                            : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#4b5563' }
+                                        }
+                                      >
+                                        {n}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* 集団授業：スロット */}
+                              {edit.lessonType === '集団授業' && (
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-600 mb-1">時間帯</label>
+                                  <div className="flex gap-2 flex-wrap">
+                                    {GROUP_SLOTS.map((slot) => {
+                                      const isSelected = edit.slots.includes(slot.label)
+                                      return (
+                                        <button
+                                          key={slot.label}
+                                          type="button"
+                                          onClick={() => toggleEditSlot(slot.label)}
+                                          className="px-3 py-2 rounded-lg text-sm border-2 transition-colors"
+                                          style={
+                                            isSelected
+                                              ? { backgroundColor: '#FF7F00', borderColor: '#FF7F00', color: 'white' }
+                                              : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#4b5563' }
+                                          }
+                                        >
+                                          {slot.label} {slot.start}〜
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* 追加業務時間 */}
+                              <div>
+                                <label className="block text-xs font-medium text-gray-600 mb-1">追加業務時間（分）</label>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="number"
+                                    inputMode="numeric"
+                                    min="0"
+                                    value={edit.extraMinutes}
+                                    onChange={(e) => setEdit({ ...edit, extraMinutes: e.target.value })}
+                                    className="w-20 border border-gray-300 rounded-lg px-3 py-2 text-sm text-center focus:outline-none focus:border-[#FF7F00]"
+                                  />
+                                  <span className="text-sm text-gray-500">分</span>
+                                </div>
+                              </div>
+
+                              {/* 保存・キャンセル */}
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={saveEdit}
+                                  disabled={saving}
+                                  className="px-5 py-2 rounded-lg text-white text-sm font-bold disabled:opacity-60"
+                                  style={{ backgroundColor: '#FF7F00' }}
+                                >
+                                  {saving ? '保存中...' : '保存する'}
+                                </button>
+                                <button
+                                  onClick={() => setEdit(null)}
+                                  disabled={saving}
+                                  className="px-5 py-2 rounded-lg text-sm text-gray-500 border border-gray-300 bg-white"
+                                >
+                                  キャンセル
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ))
                     )}
