@@ -1,0 +1,21 @@
+{
+  "name": "糸島学習塾 勤怠管理",
+  "short_name": "糸島学習塾",
+  "description": "糸島学習塾の講師勤怠管理システム",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FF7F00",
+  "theme_color": "#FF7F00",
+  "icons": [
+    {
+      "src": "/orange_right.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "/orange_right.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg"
+    }
+  ]
+}

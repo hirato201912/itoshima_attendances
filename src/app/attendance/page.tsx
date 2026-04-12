@@ -1,0 +1,425 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { supabase } from '@/lib/supabase'
+import { GROUP_SLOTS } from '@/types'
+import type { Attendance, LoggedInTeacher } from '@/types'
+
+function today() {
+  return new Date().toISOString().split('T')[0]
+}
+
+function formatDateLabel(d: string) {
+  const date = new Date(d + 'T00:00:00')
+  const day = '日月火水木金土'[date.getDay()]
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日（${day}）`
+}
+
+type Step = 'form' | 'confirm'
+
+export default function AttendancePage() {
+  const router = useRouter()
+  const [teacher, setTeacher] = useState<LoggedInTeacher | null>(null)
+  const [checking, setChecking] = useState(true)
+  const [todayRecords, setTodayRecords] = useState<Attendance[]>([])
+  const [step, setStep] = useState<Step>('form')
+
+  const [periods, setPeriods] = useState(0)
+  const [selectedSlots, setSelectedSlots] = useState<string[]>([])
+  const [extraMinutes, setExtraMinutes] = useState('')
+
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const saved = localStorage.getItem('juku_teacher')
+    if (!saved) {
+      router.replace('/')
+      return
+    }
+    const t: LoggedInTeacher = JSON.parse(saved)
+    setTeacher(t)
+
+    // 本日送信済みか確認
+    supabase
+      .from('itoshima_attendances')
+      .select('*')
+      .eq('teacher_id', t.id)
+      .eq('date', today())
+      .order('created_at')
+      .then(({ data }) => {
+        setTodayRecords(data ?? [])
+        setChecking(false)
+      })
+  }, [router])
+
+  const toggleSlot = (label: string) => {
+    setSelectedSlots((prev) =>
+      prev.includes(label) ? prev.filter((s) => s !== label) : [...prev, label]
+    )
+  }
+
+  const extra = extraMinutes === '' ? 0 : Math.max(0, parseInt(extraMinutes) || 0)
+  const sortedSlots = [...selectedSlots].sort()
+  const hasIndividual = periods > 0
+  const hasGroup = selectedSlots.length > 0
+  const hasContent = hasIndividual || hasGroup || extra > 0
+
+  const handleToConfirm = () => {
+    setError('')
+    if (!hasContent) {
+      setError('コマ数の入力か時間帯の選択をしてください')
+      return
+    }
+    setStep('confirm')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const handleSubmit = async () => {
+    if (!teacher) return
+    setLoading(true)
+    setError('')
+
+    const records: Record<string, unknown>[] = []
+
+    if (hasIndividual || (!hasGroup && extra > 0)) {
+      records.push({
+        teacher_id: teacher.id,
+        date: today(),
+        periods,
+        start_time: null,
+        end_time: null,
+        lesson_type: '個別指導',
+        extra_minutes: extra,
+        notes: null,
+      })
+    }
+
+    if (hasGroup) {
+      const first = GROUP_SLOTS.find((s) => s.label === sortedSlots[0])!
+      const last = GROUP_SLOTS.find((s) => s.label === sortedSlots[sortedSlots.length - 1])!
+      records.push({
+        teacher_id: teacher.id,
+        date: today(),
+        periods: selectedSlots.length,
+        start_time: first.start,
+        end_time: last.end,
+        lesson_type: '集団授業',
+        extra_minutes: hasIndividual ? 0 : extra,
+        notes: sortedSlots.join(''),
+      })
+    }
+
+    const { data: inserted, error: err } = await supabase
+      .from('itoshima_attendances')
+      .insert(records)
+      .select()
+
+    setLoading(false)
+
+    if (err) {
+      setError('送信に失敗しました。もう一度お試しください。')
+      setStep('form')
+    } else {
+      setTodayRecords(inserted ?? [])
+      setStep('form')
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('juku_teacher')
+    router.push('/')
+  }
+
+  if (!teacher || checking) return null
+
+  // 本日送信済み
+  const submitted = todayRecords.length > 0
+  const submittedIndividual = todayRecords.find((r) => r.lesson_type === '個別指導')
+  const submittedGroup = todayRecords.find((r) => r.lesson_type === '集団授業')
+  const totalExtra = todayRecords.reduce((sum, r) => sum + (r.extra_minutes ?? 0), 0)
+  const totalPeriods = todayRecords.reduce((sum, r) => sum + r.periods, 0)
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header
+        className="py-4 px-4 flex items-center justify-between shadow-md sticky top-0 z-20"
+        style={{ backgroundColor: '#FF7F00' }}
+      >
+        <div>
+          <p className="text-white/70 text-xs">糸島学習塾</p>
+          <p className="text-white font-bold text-base">{teacher.name} 先生</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {teacher.is_admin && (
+            <Link href="/admin" className="text-white/90 text-sm underline underline-offset-2">
+              管理画面
+            </Link>
+          )}
+          <Link href="/history" className="text-white/90 text-sm underline underline-offset-2">
+            勤怠履歴
+          </Link>
+          <button
+            onClick={handleLogout}
+            className="bg-white/20 text-white text-sm px-3 py-1.5 rounded-lg"
+          >
+            ログアウト
+          </button>
+        </div>
+      </header>
+
+      <main className="max-w-lg mx-auto px-4 py-6">
+
+        {/* ===== 送信済み表示 ===== */}
+        {submitted && (
+          <>
+            <div className="bg-green-50 border border-green-300 rounded-2xl p-5 mb-4 text-center">
+              <p className="text-green-700 font-bold text-lg mb-1">✅ 本日の勤怠は送信済みです</p>
+              <p className="text-green-600 text-sm">{formatDateLabel(today())}</p>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm p-5 flex flex-col gap-3">
+              <p className="text-sm font-medium text-gray-500 mb-1">送信内容</p>
+
+              {submittedIndividual && (
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="text-gray-700">個別指導</span>
+                  <span className="font-bold" style={{ color: '#FF7F00' }}>
+                    {submittedIndividual.periods} コマ
+                  </span>
+                </div>
+              )}
+
+              {submittedGroup && (
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="text-gray-700">
+                    集団授業 {submittedGroup.notes && `（${submittedGroup.notes}）`}
+                  </span>
+                  <span className="font-bold" style={{ color: '#FF7F00' }}>
+                    {submittedGroup.periods} コマ
+                  </span>
+                </div>
+              )}
+
+              {totalExtra > 0 && (
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="text-gray-700">追加業務時間</span>
+                  <span className="font-bold text-gray-600">{totalExtra} 分</span>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center pt-1">
+                <span className="text-sm font-medium text-gray-500">合計</span>
+                <span className="text-xl font-bold" style={{ color: '#FF7F00' }}>
+                  {totalPeriods} コマ
+                </span>
+              </div>
+            </div>
+
+            <p className="text-center text-sm text-gray-400 mt-4">
+              修正が必要な場合は管理者にご連絡ください
+            </p>
+
+            <Link
+              href="/history"
+              className="block text-center mt-3 text-sm underline underline-offset-2"
+              style={{ color: '#FF7F00' }}
+            >
+              勤怠履歴を見る
+            </Link>
+          </>
+        )}
+
+        {/* ===== 入力フォーム ===== */}
+        {!submitted && step === 'form' && (
+          <>
+            <h2 className="text-xl font-bold text-gray-800 mb-4">勤怠入力</h2>
+
+            {error && (
+              <div className="bg-red-50 border border-red-300 text-red-600 rounded-2xl p-4 mb-4 text-center">
+                {error}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-4">
+              {/* 勤務日（当日固定） */}
+              <div className="bg-white rounded-2xl shadow-sm p-5 flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-500">勤務日</span>
+                <span className="text-base font-bold text-gray-800">{formatDateLabel(today())}</span>
+              </div>
+
+              {/* 個別指導 */}
+              <div className="bg-white rounded-2xl shadow-sm p-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-xs font-bold px-2.5 py-1 rounded-full text-white" style={{ backgroundColor: '#FF7F00' }}>
+                    個別指導
+                  </span>
+                  <span className="text-sm text-gray-500">担当したコマ数を選択</span>
+                </div>
+                <div className="grid grid-cols-6 gap-2">
+                  {[0, 1, 2, 3, 4, 5].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setPeriods(n)}
+                      className="py-4 rounded-xl text-xl font-bold border-2 transition-colors"
+                      style={
+                        periods === n
+                          ? { backgroundColor: '#FF7F00', borderColor: '#FF7F00', color: 'white' }
+                          : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#4b5563' }
+                      }
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5 text-right">コマ</p>
+              </div>
+
+              {/* 集団授業 */}
+              <div className="bg-white rounded-2xl shadow-sm p-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-xs font-bold px-2.5 py-1 rounded-full text-white" style={{ backgroundColor: '#CC5500' }}>
+                    集団授業
+                  </span>
+                  <span className="text-sm text-gray-500">担当した時間帯を選択（複数可）</span>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {GROUP_SLOTS.map((slot) => {
+                    const isSelected = selectedSlots.includes(slot.label)
+                    return (
+                      <button
+                        key={slot.label}
+                        type="button"
+                        onClick={() => toggleSlot(slot.label)}
+                        className="flex items-center gap-4 px-4 py-3.5 rounded-xl border-2 text-left transition-colors"
+                        style={
+                          isSelected
+                            ? { backgroundColor: '#FFF0E0', borderColor: '#FF7F00' }
+                            : { backgroundColor: '#fafafa', borderColor: '#e5e7eb' }
+                        }
+                      >
+                        <span className="text-xl font-bold w-7 text-center shrink-0" style={{ color: isSelected ? '#FF7F00' : '#9ca3af' }}>
+                          {slot.label}
+                        </span>
+                        <span className="text-base tabular-nums" style={{ color: isSelected ? '#CC5500' : '#6b7280' }}>
+                          {slot.start} 〜 {slot.end}
+                        </span>
+                        {isSelected && <span className="ml-auto font-bold" style={{ color: '#FF7F00' }}>✓</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+                {hasGroup && (
+                  <p className="text-sm text-center mt-2.5 font-medium" style={{ color: '#FF7F00' }}>
+                    {sortedSlots.join('')}（{selectedSlots.length}コマ）を選択中
+                  </p>
+                )}
+              </div>
+
+              {/* 追加業務時間 */}
+              <div className="bg-white rounded-2xl shadow-sm p-5">
+                <label className="block text-sm font-medium text-gray-500 mb-1.5">
+                  追加業務時間
+                  <span className="ml-2 text-xs font-normal text-gray-400">授業以外の業務があった場合のみ</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    max="480"
+                    value={extraMinutes}
+                    onChange={(e) => setExtraMinutes(e.target.value)}
+                    className="w-24 border border-gray-300 rounded-xl px-3 py-3 text-base text-center focus:outline-none focus:border-[#FF7F00]"
+                    placeholder="0"
+                  />
+                  <span className="text-gray-500 text-base">分</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleToConfirm}
+                className="w-full py-4 rounded-xl text-white font-bold text-lg mt-1"
+                style={{ backgroundColor: '#FF7F00' }}
+              >
+                入力内容を確認する
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ===== 確認画面 ===== */}
+        {!submitted && step === 'confirm' && (
+          <>
+            <h2 className="text-xl font-bold text-gray-800 mb-4">入力内容の確認</h2>
+            <div className="bg-white rounded-2xl shadow-sm p-6 flex flex-col gap-4">
+
+              <ConfirmRow label="勤務日" value={formatDateLabel(today())} />
+              {hasIndividual && <ConfirmRow label="個別指導" value={`${periods} コマ`} />}
+
+              {hasGroup && (
+                <div className="flex gap-3 py-3 border-b border-gray-100">
+                  <span className="text-sm text-gray-500 w-28 shrink-0 pt-0.5">集団授業</span>
+                  <div className="flex flex-col gap-1">
+                    {sortedSlots.map((label) => {
+                      const slot = GROUP_SLOTS.find((s) => s.label === label)!
+                      return (
+                        <span key={label} className="text-base text-gray-800 tabular-nums">
+                          {label} {slot.start} 〜 {slot.end}
+                        </span>
+                      )
+                    })}
+                    <span className="text-sm mt-0.5" style={{ color: '#FF7F00' }}>{selectedSlots.length} コマ</span>
+                  </div>
+                </div>
+              )}
+
+              {extra > 0 && <ConfirmRow label="追加業務時間" value={`${extra} 分`} />}
+
+              <div className="rounded-xl px-4 py-3 flex justify-between items-center mt-1" style={{ backgroundColor: '#FFF5E6' }}>
+                <span className="text-sm font-medium text-gray-600">合計コマ数</span>
+                <span className="text-xl font-bold" style={{ color: '#FF7F00' }}>
+                  {periods + selectedSlots.length} コマ
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-3 mt-2">
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={loading}
+                  className="w-full py-4 rounded-xl text-white font-bold text-lg disabled:opacity-60"
+                  style={{ backgroundColor: '#FF7F00' }}
+                >
+                  {loading ? '送信中...' : 'この内容で送信する'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStep('form')}
+                  disabled={loading}
+                  className="w-full py-3.5 rounded-xl font-medium text-base border-2 border-gray-200 text-gray-500 bg-white"
+                >
+                  修正する
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </main>
+    </div>
+  )
+}
+
+function ConfirmRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-3 py-3 border-b border-gray-100">
+      <span className="text-sm text-gray-500 w-28 shrink-0">{label}</span>
+      <span className="text-base text-gray-800 font-medium">{value}</span>
+    </div>
+  )
+}
