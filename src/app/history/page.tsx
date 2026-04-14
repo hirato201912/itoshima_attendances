@@ -6,6 +6,9 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
+const EARLY_SLOTS = ['①', '②']
+const LATE_SLOTS = ['③', '④', '⑤']
+
 function formatTime(t: string) {
   return t.slice(0, 5)
 }
@@ -30,10 +33,7 @@ export default function HistoryPage() {
 
   useEffect(() => {
     const saved = localStorage.getItem('juku_teacher')
-    if (!saved) {
-      router.replace('/')
-      return
-    }
+    if (!saved) { router.replace('/'); return }
     setTeacher(JSON.parse(saved))
   }, [router])
 
@@ -63,8 +63,29 @@ export default function HistoryPage() {
     router.push('/')
   }
 
-  const totalPeriods = attendances.reduce((sum, a) => sum + a.periods, 0)
-  const totalExtra = attendances.reduce((sum, a) => sum + (a.extra_minutes ?? 0), 0)
+  // 日付ごとにグループ化（降順）
+  const grouped = attendances.reduce<Record<string, Attendance[]>>((acc, a) => {
+    if (!acc[a.date]) acc[a.date] = []
+    acc[a.date].push(a)
+    return acc
+  }, {})
+  const sortedDates = Object.keys(grouped).sort((a, b) => b.localeCompare(a))
+
+  // 集計
+  const totalPeriods = attendances.reduce((s, a) => s + a.periods, 0)
+  const totalExtra = attendances.reduce((s, a) => s + (a.extra_minutes ?? 0), 0)
+  const workingDays = sortedDates.length
+  const individualPeriods = attendances
+    .filter((a) => a.lesson_type === '個別指導')
+    .reduce((s, a) => s + a.periods, 0)
+
+  let groupPeriodsEarly = 0
+  let groupPeriodsLate = 0
+  attendances.filter((a) => a.lesson_type === '集団授業').forEach((a) => {
+    const notes = a.notes ?? ''
+    groupPeriodsEarly += [...notes].filter((c) => EARLY_SLOTS.includes(c)).length
+    groupPeriodsLate += [...notes].filter((c) => LATE_SLOTS.includes(c)).length
+  })
 
   if (!teacher) return null
 
@@ -84,23 +105,19 @@ export default function HistoryPage() {
               管理画面
             </Link>
           )}
-          <Link
-            href="/attendance"
-            className="text-white/90 text-sm underline underline-offset-2"
-          >
+          <Link href="/attendance" className="text-white/90 text-sm underline underline-offset-2">
             勤怠入力
           </Link>
-          <button
-            onClick={handleLogout}
-            className="bg-white/20 text-white text-sm px-3 py-1.5 rounded-lg"
-          >
+          <button onClick={handleLogout} className="bg-white/20 text-white text-sm px-3 py-1.5 rounded-lg">
             ログアウト
           </button>
         </div>
       </header>
 
-      <main className="max-w-lg mx-auto px-4 py-6">
-        <div className="flex items-center justify-between mb-4">
+      <main className="max-w-lg mx-auto px-4 py-6 space-y-4">
+
+        {/* 月選択 */}
+        <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold text-gray-800">勤怠履歴</h2>
           <input
             type="month"
@@ -110,66 +127,127 @@ export default function HistoryPage() {
           />
         </div>
 
-        {/* 月集計 */}
+        {/* 月次サマリーカード */}
         {!loading && attendances.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-sm p-4 mb-4 flex justify-between items-center">
-            <span className="text-gray-500 text-sm">{attendances.length}日 勤務</span>
-            <div className="text-right">
-              <p className="font-bold text-xl" style={{ color: '#FF7F00' }}>
-                合計 {totalPeriods} コマ
-              </p>
-              {totalExtra > 0 && (
-                <p className="text-sm text-gray-400">追加業務 {totalExtra}分</p>
-              )}
+          <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+            <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+              <p className="font-bold text-gray-700">月間まとめ</p>
+              <p className="text-sm text-gray-400">{workingDays}日 勤務</p>
+            </div>
+            <div className="px-5 py-4 grid grid-cols-2 gap-x-6 gap-y-3">
+              <div>
+                <p className="text-xs text-gray-400 mb-0.5">個別指導</p>
+                <p className="text-2xl font-bold text-gray-800">
+                  {individualPeriods}<span className="text-sm font-normal text-gray-500 ml-1">コマ</span>
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 mb-0.5">集団授業 ①②</p>
+                <p className="text-2xl font-bold text-gray-800">
+                  {groupPeriodsEarly}<span className="text-sm font-normal text-gray-500 ml-1">コマ</span>
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 mb-0.5">追加業務時間</p>
+                <p className="text-2xl font-bold text-gray-800">
+                  {totalExtra}<span className="text-sm font-normal text-gray-500 ml-1">分</span>
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 mb-0.5">集団授業 ③以降</p>
+                <p className="text-2xl font-bold text-gray-800">
+                  {groupPeriodsLate}<span className="text-sm font-normal text-gray-500 ml-1">コマ</span>
+                </p>
+              </div>
+            </div>
+            <div
+              className="px-5 py-3 border-t border-gray-100 flex justify-between items-center"
+              style={{ backgroundColor: '#FFF7ED' }}
+            >
+              <p className="text-sm font-bold text-gray-600">合計コマ数</p>
+              <p className="text-2xl font-bold" style={{ color: '#FF7F00' }}>{totalPeriods} コマ</p>
             </div>
           </div>
         )}
 
-        {/* 履歴リスト */}
+        {/* 履歴リスト（日付ごとにグループ化） */}
         {loading ? (
           <p className="text-center text-gray-400 py-16">読み込み中...</p>
-        ) : attendances.length === 0 ? (
+        ) : sortedDates.length === 0 ? (
           <p className="text-center text-gray-400 py-16">この月の記録はありません</p>
         ) : (
           <div className="flex flex-col gap-3">
-            {attendances.map((a) => (
-              <div key={a.id} className="bg-white rounded-2xl shadow-sm p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-bold text-gray-800">{formatDate(a.date)}</span>
-                  <span className="font-bold text-xl" style={{ color: '#FF7F00' }}>
-                    {a.periods} コマ
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span
-                    className="px-3 py-0.5 rounded-full font-medium"
-                    style={{ backgroundColor: '#FFF0E0', color: '#CC5500' }}
+            <p className="text-sm font-bold text-gray-500 px-1">勤務記録</p>
+            {sortedDates.map((date) => {
+              const dayRecords = grouped[date]
+              const dayTotal = dayRecords.reduce((s, a) => s + a.periods, 0)
+              const dayExtra = dayRecords.reduce((s, a) => s + (a.extra_minutes ?? 0), 0)
+
+              return (
+                <div key={date} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                  {/* 日付ヘッダー */}
+                  <div
+                    className="px-4 py-3 flex items-center justify-between"
+                    style={{ backgroundColor: '#FFF7ED' }}
                   >
-                    {a.lesson_type}
-                  </span>
-                  {/* 集団授業：選択スロット表示 */}
-                  {a.lesson_type === '集団授業' && a.notes && (
-                    <span className="text-gray-500">{a.notes}</span>
-                  )}
-                  {/* 集団授業：時間帯 */}
-                  {a.lesson_type === '集団授業' && a.start_time && a.end_time && (
-                    <span className="text-gray-400 tabular-nums">
-                      {formatTime(a.start_time)} 〜 {formatTime(a.end_time)}
-                    </span>
-                  )}
-                  {/* 追加業務時間 */}
-                  {(a.extra_minutes ?? 0) > 0 && (
-                    <span className="text-gray-400">＋{a.extra_minutes}分</span>
+                    <p className="font-bold text-gray-800">{formatDate(date)}</p>
+                    <div className="text-right">
+                      <span className="text-xl font-bold" style={{ color: '#FF7F00' }}>{dayTotal}</span>
+                      <span className="text-sm text-gray-400 ml-1">コマ</span>
+                    </div>
+                  </div>
+
+                  {/* その日の各勤務 */}
+                  <div className="divide-y divide-gray-100">
+                    {dayRecords.map((a) => {
+                      const isIndividual = a.lesson_type === '個別指導'
+                      return (
+                        <div key={a.id} className="px-4 py-3 flex items-center gap-3">
+                          {/* 種別バッジ */}
+                          <span
+                            className="text-xs font-bold px-2.5 py-1 rounded-lg shrink-0"
+                            style={
+                              isIndividual
+                                ? { backgroundColor: '#FFEDD5', color: '#C2410C' }
+                                : { backgroundColor: '#DBEAFE', color: '#1D4ED8' }
+                            }
+                          >
+                            {isIndividual ? '個別' : '集団'}
+                          </span>
+
+                          {/* 内容 */}
+                          <div className="flex-1 min-w-0">
+                            {isIndividual ? (
+                              <span className="text-sm text-gray-700">{a.periods}コマ</span>
+                            ) : (
+                              <span className="text-sm text-gray-700">
+                                {a.notes && <span className="font-bold mr-1">{a.notes}</span>}
+                                {a.start_time && a.end_time && (
+                                  <span className="text-gray-400 tabular-nums text-xs">
+                                    {formatTime(a.start_time)} 〜 {formatTime(a.end_time)}
+                                  </span>
+                                )}
+                                <span className="ml-2">{a.periods}コマ</span>
+                              </span>
+                            )}
+                            {(a.extra_minutes ?? 0) > 0 && (
+                              <span className="ml-2 text-xs text-gray-400">＋{a.extra_minutes}分</span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* その日の追加業務時間（合計） */}
+                  {dayExtra > 0 && (
+                    <div className="px-4 py-2 border-t border-gray-100">
+                      <p className="text-xs text-gray-400">追加業務時間 合計 {dayExtra}分</p>
+                    </div>
                   )}
                 </div>
-                {/* 個別指導の備考 */}
-                {a.lesson_type === '個別指導' && a.notes && (
-                  <p className="mt-2 text-sm text-gray-400 border-t border-gray-100 pt-2">
-                    {a.notes}
-                  </p>
-                )}
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </main>
