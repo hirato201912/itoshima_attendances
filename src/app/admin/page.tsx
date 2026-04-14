@@ -71,7 +71,7 @@ export default function AdminPage() {
     const to = `${year}-${month}-${String(lastDay).padStart(2, '0')}`
 
     const [{ data: teachers }, { data: records }] = await Promise.all([
-      supabase.from('itoshima_teachers').select('id, name, code').eq('is_admin', false).order('code'),
+      supabase.from('itoshima_teachers').select('id, name, code').eq('is_admin', false).eq('is_juku_teacher', true).order('code'),
       supabase.from('itoshima_attendances').select('*').gte('date', from).lte('date', to),
     ])
 
