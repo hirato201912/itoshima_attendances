@@ -302,9 +302,12 @@ export default function AdminPage() {
 
   const handleDelete = async (recordId: string) => {
     if (!confirm('この記録を削除しますか？')) return
-    setDeletingId(recordId)
+    // 即座にUIから削除
+    setSelectedTeacher(prev => prev ? { ...prev, records: prev.records.filter(r => r.id !== recordId) } : null)
+    setSummaries(prev => prev.map(s => ({ ...s, records: s.records.filter(r => r.id !== recordId) })))
+    if (edit?.id === recordId) setEdit(null)
+    // DBに反映・集計値を再同期
     await supabase.from('itoshima_attendances').delete().eq('id', recordId)
-    setDeletingId(null)
     fetchData()
   }
 
