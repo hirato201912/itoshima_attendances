@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { GROUP_SLOTS } from '@/types'
+import { GROUP_SLOTS, SHIFT_SLOTS } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
 const ORANGE = '#FF7F00'
@@ -209,9 +209,19 @@ function RecordForm({
   )
 }
 
+type ShiftRow = {
+  date: string
+  teacher_id: string
+  slot: number
+  teacher_name: string
+}
+
 export default function AdminPage() {
   const router = useRouter()
   const [teacher, setTeacher] = useState<LoggedInTeacher | null>(null)
+  const [activeTab, setActiveTab] = useState<'attendance' | 'shift'>('attendance')
+
+  // 勤怠タブ
   const [selectedMonth, setSelectedMonth] = useState(currentMonth)
   const [summaries, setSummaries] = useState<TeacherSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -220,6 +230,15 @@ export default function AdminPage() {
   const [saving, setSaving] = useState(false)
   const [edit, setEdit] = useState<EditState | null>(null)
   const [newRecord, setNewRecord] = useState<NewState | null>(null)
+
+  // シフトタブ
+  const [shiftMonth, setShiftMonth] = useState(() => {
+    const now = new Date()
+    const d = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+  const [shiftRows, setShiftRows] = useState<ShiftRow[]>([])
+  const [shiftLoading, setShiftLoading] = useState(false)
 
   useEffect(() => {
     const saved = localStorage.getItem('juku_teacher')
@@ -234,6 +253,60 @@ export default function AdminPage() {
     fetchData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teacher, selectedMonth])
+
+  // シフトデータ取得＋リアルタイム購読
+  useEffect(() => {
+    if (!teacher) return
+
+    const fetchShift = async () => {
+      setShiftLoading(true)
+      const [year, m] = shiftMonth.split('-')
+      const from = `${year}-${m}-01`
+      const lastDay = new Date(parseInt(year), parseInt(m), 0).getDate()
+      const to = `${year}-${m}-${String(lastDay).padStart(2, '0')}`
+
+      const [{ data: reqRows }, { data: teachers }] = await Promise.all([
+        supabase
+          .from('juku_shift_requests')
+          .select('date, teacher_id, slot')
+          .gte('date', from)
+          .lte('date', to)
+          .order('date'),
+        supabase
+          .from('itoshima_teachers')
+          .select('id, name'),
+      ])
+
+      const teacherMap: Record<string, string> = {}
+      for (const t of teachers ?? []) {
+        teacherMap[t.id] = t.name
+      }
+
+      const mapped: ShiftRow[] = (reqRows ?? []).map((r: { date: string; teacher_id: string; slot: number }) => ({
+        date: r.date,
+        teacher_id: r.teacher_id,
+        slot: r.slot,
+        teacher_name: teacherMap[r.teacher_id] ?? '不明',
+      }))
+      setShiftRows(mapped)
+      setShiftLoading(false)
+    }
+
+    fetchShift()
+
+    // リアルタイム購読
+    const channel = supabase
+      .channel('shift-admin')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'juku_shift_requests' },
+        () => { fetchShift() }
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teacher, shiftMonth])
 
   const fetchData = async () => {
     setLoading(true)
@@ -340,7 +413,33 @@ export default function AdminPage() {
         </div>
       </header>
 
+      {/* タブバー */}
+      <div className="border-b border-gray-200 bg-white">
+        <div className="max-w-screen-xl mx-auto px-6 flex gap-1 pt-2">
+          {(['attendance', 'shift'] as const).map((tab) => {
+            const label = tab === 'attendance' ? '勤怠管理' : '空き時間帯'
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className="px-5 py-2.5 text-sm font-bold rounded-t-lg border-b-2 transition-colors"
+                style={
+                  activeTab === tab
+                    ? { borderColor: ORANGE, color: ORANGE, backgroundColor: '#FFF7ED' }
+                    : { borderColor: 'transparent', color: '#6b7280', backgroundColor: 'transparent' }
+                }
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
       <div className="max-w-screen-xl mx-auto px-6 py-6 flex flex-col gap-4">
+
+        {/* ===== 勤怠管理タブ ===== */}
+        {activeTab === 'attendance' && <>
 
         {/* 月選択 */}
         <div className="flex items-center gap-4 bg-white rounded-2xl shadow px-6 py-4">
@@ -509,6 +608,106 @@ export default function AdminPage() {
             )}
           </div>
         </div>
+        </> /* end 勤怠管理タブ */}
+
+        {/* ===== シフト希望タブ ===== */}
+        {activeTab === 'shift' && (() => {
+          const [sYear, sMonth] = shiftMonth.split('-').map(Number)
+          const lastDate = new Date(sYear, sMonth, 0).getDate()
+          const dates: string[] = []
+          for (let d = 1; d <= lastDate; d++) {
+            dates.push(`${sYear}-${String(sMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+          }
+
+          const prevShiftMonth = () => {
+            const d = new Date(sYear, sMonth - 2, 1)
+            setShiftMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+          }
+          const nextShiftMonth = () => {
+            const d = new Date(sYear, sMonth, 1)
+            setShiftMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+          }
+
+          return (
+            <>
+              {/* 月ナビ */}
+              <div className="flex items-center gap-4 bg-white rounded-2xl shadow px-6 py-4">
+                <button onClick={prevShiftMonth} className="text-2xl text-gray-400 w-9 h-9 flex items-center justify-center rounded-xl hover:bg-gray-100">‹</button>
+                <span className="text-base font-bold text-gray-800">{sYear}年{sMonth}月</span>
+                <button onClick={nextShiftMonth} className="text-2xl text-gray-400 w-9 h-9 flex items-center justify-center rounded-xl hover:bg-gray-100">›</button>
+                <span className="ml-2 text-xs text-gray-400">講師がシフトを更新すると自動で反映されます</span>
+              </div>
+
+              {shiftLoading ? (
+                <div className="bg-white rounded-2xl shadow p-12 text-center text-gray-400">読み込み中...</div>
+              ) : shiftRows.length === 0 ? (
+                <div className="bg-white rounded-2xl shadow p-12 text-center text-gray-400">
+                  この月のシフト希望はまだありません
+                </div>
+              ) : (
+                <div className="bg-white rounded-2xl shadow overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100 bg-orange-50">
+                        <th className="px-4 py-3 text-left font-bold text-gray-600 whitespace-nowrap">日付</th>
+                        {SHIFT_SLOTS.map(s => (
+                          <th key={s.slot} className="px-4 py-3 text-left font-bold text-gray-600 whitespace-nowrap">
+                            {s.label}　{s.start}〜{s.end}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {dates.map(date => {
+                        const slot1rows = shiftRows.filter(r => r.date === date && r.slot === 1)
+                        const slot2rows = shiftRows.filter(r => r.date === date && r.slot === 2)
+                        if (slot1rows.length === 0 && slot2rows.length === 0) return null
+
+                        const dow = new Date(date + 'T00:00:00').getDay()
+                        const dayLabel = '日月火水木金土'[dow]
+                        const dateStr = `${sMonth}/${parseInt(date.split('-')[2])}（${dayLabel}）`
+
+                        return (
+                          <tr key={date} style={{ backgroundColor: dow === 0 ? '#FFF5F5' : dow === 6 ? '#F5F8FF' : undefined }}>
+                            <td
+                              className="px-4 py-3 font-medium whitespace-nowrap"
+                              style={{ color: dow === 0 ? '#ef4444' : dow === 6 ? '#3b82f6' : '#374151' }}
+                            >
+                              {dateStr}
+                            </td>
+                            {SHIFT_SLOTS.map(s => {
+                              const rows = s.slot === 1 ? slot1rows : slot2rows
+                              return (
+                                <td key={s.slot} className="px-4 py-3">
+                                  {rows.length === 0 ? (
+                                    <span className="text-gray-300">−</span>
+                                  ) : (
+                                    <div className="flex flex-wrap gap-1">
+                                      {rows.map(r => (
+                                        <span
+                                          key={r.teacher_id}
+                                          className="text-xs font-medium px-2 py-0.5 rounded-full"
+                                          style={{ backgroundColor: '#FFF0E0', color: '#CC5500' }}
+                                        >
+                                          {r.teacher_name}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )
+        })()}
+
       </div>
     </div>
   )

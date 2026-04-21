@@ -33,3 +33,17 @@ export const GROUP_SLOTS = [
   { label: '④', start: '19:55', end: '20:40' },
   { label: '⑤', start: '20:45', end: '21:30' },
 ] as const
+
+export const SHIFT_SLOTS = [
+  { slot: 1, label: '枠1', start: '17:05', end: '18:05' },
+  { slot: 2, label: '枠2', start: '18:15', end: '19:50' },
+  { slot: 3, label: '枠3', start: '19:55', end: '21:30' },
+] as const
+
+export type ShiftRequest = {
+  id: string
+  teacher_id: string
+  date: string
+  slot: number
+  created_at: string
+}

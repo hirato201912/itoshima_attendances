@@ -108,6 +108,9 @@ export default function HistoryPage() {
           <Link href="/attendance" className="text-white/90 text-sm underline underline-offset-2">
             勤怠入力
           </Link>
+          <Link href="/shift" className="text-white/90 text-sm underline underline-offset-2">
+            空き時間登録
+          </Link>
           <button onClick={handleLogout} className="bg-white/20 text-white text-sm px-3 py-1.5 rounded-lg">
             ログアウト
           </button>

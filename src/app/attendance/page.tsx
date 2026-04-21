@@ -159,6 +159,9 @@ export default function AttendancePage() {
               管理画面
             </Link>
           )}
+          <Link href="/shift" className="text-white/90 text-sm underline underline-offset-2">
+            空き時間登録
+          </Link>
           <Link href="/history" className="text-white/90 text-sm underline underline-offset-2">
             勤怠履歴
           </Link>
