@@ -48,6 +48,14 @@ function formatDate(d: string) {
   return `${date.getMonth() + 1}/${date.getDate()}（${day}）`
 }
 
+function fmtMin(min: number): string {
+  if (min === 0) return '0分'
+  if (min < 60) return `${min}分`
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return m === 0 ? `${h}時間` : `${h}時間${m}分`
+}
+
 function buildInsertOrUpdate(form: FormState): Record<string, unknown> | null {
   const extra = parseInt(form.extraMinutes) || 0
   if (form.lessonType === '個別指導') {
@@ -339,7 +347,7 @@ export default function AdminPage() {
         groupPeriodsEarly, groupPeriodsLate,
         extraMinutes: tr.reduce((s, r) => s + (r.extra_minutes ?? 0), 0),
         workingDays: new Set(tr.map(r => r.date)).size,
-        records: tr.sort((a, b) => b.date.localeCompare(a.date)),
+        records: tr.sort((a, b) => a.date.localeCompare(b.date)),
       }
     })
 
@@ -457,7 +465,7 @@ export default function AdminPage() {
         <div className="flex gap-5 items-start">
 
           {/* 左：講師一覧 */}
-          <div className="w-72 shrink-0 space-y-2">
+          <div className="w-72 shrink-0 sticky top-4 max-h-[calc(100vh-6rem)] overflow-y-auto space-y-2">
             {loading ? (
               <p className="text-center text-gray-400 py-10">読み込み中...</p>
             ) : (
@@ -475,7 +483,7 @@ export default function AdminPage() {
                   <div className="mt-1.5 text-xs text-gray-500 space-y-0.5">
                     <p>個別 {s.individualPeriods}コマ　集団①② {s.groupPeriodsEarly}コマ</p>
                     <p>集団③以降 {s.groupPeriodsLate}コマ　勤務 {s.workingDays}日</p>
-                    {s.extraMinutes > 0 && <p>追加業務 {s.extraMinutes}分</p>}
+                    {s.extraMinutes > 0 && <p>追加業務 {fmtMin(s.extraMinutes)}</p>}
                   </div>
                 </button>
               ))
@@ -500,7 +508,7 @@ export default function AdminPage() {
                         <span>集団①②　<span className="font-bold text-gray-800">{selectedTeacher.groupPeriodsEarly}</span>コマ</span>
                         <span>集団③以降　<span className="font-bold text-gray-800">{selectedTeacher.groupPeriodsLate}</span>コマ</span>
                         <span>勤務日数　<span className="font-bold text-gray-800">{selectedTeacher.workingDays}</span>日</span>
-                        <span>追加業務　<span className="font-bold text-gray-800">{selectedTeacher.extraMinutes}</span>分</span>
+                        <span>追加業務　<span className="font-bold text-gray-800">{fmtMin(selectedTeacher.extraMinutes)}</span></span>
                       </div>
                     </div>
                     <button
@@ -579,7 +587,7 @@ export default function AdminPage() {
                                 {r.periods}コマ
                               </td>
                               <td className="px-4 py-3 text-center text-sm text-gray-500">
-                                {(r.extra_minutes ?? 0) > 0 ? `${r.extra_minutes}分` : '−'}
+                                {(r.extra_minutes ?? 0) > 0 ? fmtMin(r.extra_minutes ?? 0) : '−'}
                               </td>
                               <td className="px-4 py-3 text-right whitespace-nowrap">
                                 <button
@@ -601,6 +609,18 @@ export default function AdminPage() {
                           )
                         })}
                       </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-gray-300 bg-orange-50">
+                          <td colSpan={3} className="px-5 py-3 text-sm font-bold text-gray-700">月合計</td>
+                          <td className="px-4 py-3 text-center text-sm font-bold text-gray-800">
+                            {selectedTeacher.individualPeriods + selectedTeacher.groupPeriodsEarly + selectedTeacher.groupPeriodsLate}コマ
+                          </td>
+                          <td className="px-4 py-3 text-center text-sm font-bold text-gray-800">
+                            {selectedTeacher.extraMinutes > 0 ? fmtMin(selectedTeacher.extraMinutes) : '−'}
+                          </td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
                     </table>
                   )}
                 </div>
