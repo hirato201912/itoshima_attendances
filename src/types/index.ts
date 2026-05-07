@@ -27,7 +27,7 @@ export type LoggedInTeacher = {
 }
 
 export const GROUP_SLOTS = [
-  { label: '①', start: '17:05', end: '17:50' },
+  { label: '①', start: '17:05', end: '18:05' },
   { label: '②', start: '18:10', end: '18:55' },
   { label: '③', start: '19:05', end: '19:50' },
   { label: '④', start: '19:55', end: '20:40' },

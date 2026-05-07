@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import "./globals.css";
+import ServiceWorkerRegister from "./ServiceWorkerRegister";
 
 const geist = Geist({
   variable: "--font-geist-sans",
@@ -40,7 +41,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja" className={`${geist.variable} h-full antialiased`}>
-      <body className="min-h-full">{children}</body>
+      <body className="min-h-full">
+        <ServiceWorkerRegister />
+        {children}
+      </body>
     </html>
   );
 }
