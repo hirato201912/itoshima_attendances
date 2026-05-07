@@ -32,6 +32,7 @@ export default function AttendancePage() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showInstallBanner, setShowInstallBanner] = useState(false)
 
   useEffect(() => {
     const saved = localStorage.getItem('juku_teacher')
@@ -41,6 +42,10 @@ export default function AttendancePage() {
     }
     const t: LoggedInTeacher = JSON.parse(saved)
     setTeacher(t)
+
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+    const dismissed = localStorage.getItem('juku_install_banner_dismissed') === '1'
+    setShowInstallBanner(!isStandalone && !dismissed)
 
     // 本日送信済みか確認
     supabase
@@ -175,6 +180,43 @@ export default function AttendancePage() {
       </header>
 
       <main className="max-w-lg mx-auto px-4 py-6">
+
+        {showInstallBanner && (
+          <div className="mb-4 bg-white rounded-2xl border border-orange-200 px-4 py-3 flex items-center justify-between gap-3">
+            <div className="text-sm text-gray-700">
+              ホーム画面に追加すると、毎回ブラウザを開かずに済みます。
+              <Link
+                href="/install"
+                className="ml-1 font-medium underline underline-offset-2"
+                style={{ color: '#FF7F00' }}
+              >
+                追加方法を見る
+              </Link>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.setItem('juku_install_banner_dismissed', '1')
+                setShowInstallBanner(false)
+              }}
+              aria-label="閉じる"
+              className="flex-shrink-0 w-7 h-7 rounded-full text-gray-400 hover:text-gray-600 flex items-center justify-center"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-4 h-4"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        )}
 
         {/* ===== 送信済み表示 ===== */}
         {submitted && (

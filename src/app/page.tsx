@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 
 export default function LoginPage() {
@@ -11,13 +12,17 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showInstallHint, setShowInstallHint] = useState(false)
 
   useEffect(() => {
     const saved = localStorage.getItem('juku_teacher')
     if (saved) {
       const teacher = JSON.parse(saved)
       router.replace(teacher.is_admin ? '/admin' : '/attendance')
+      return
     }
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+    setShowInstallHint(!isStandalone)
   }, [router])
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -112,6 +117,15 @@ export default function LoginPage() {
               {loading ? 'ログイン中...' : 'ログイン'}
             </button>
           </form>
+
+          {showInstallHint && (
+            <Link
+              href="/install"
+              className="block mt-5 text-center text-sm text-[#FF7F00] underline underline-offset-4"
+            >
+              ホーム画面に追加する方法
+            </Link>
+          )}
         </div>
       </div>
     </div>
