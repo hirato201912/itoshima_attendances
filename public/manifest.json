@@ -3,19 +3,29 @@
   "short_name": "糸島学習塾",
   "description": "糸島学習塾の講師勤怠管理システム",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#FF7F00",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
   "theme_color": "#FF7F00",
   "icons": [
     {
-      "src": "/orange_right.jpg",
-      "sizes": "512x512",
-      "type": "image/jpeg"
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "/orange_right.jpg",
-      "sizes": "192x192",
-      "type": "image/jpeg"
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
