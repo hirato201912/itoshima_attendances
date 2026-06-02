@@ -61,8 +61,11 @@ export default function SummerPage() {
   useEffect(() => {
     const saved = localStorage.getItem('juku_teacher')
     if (!saved) { router.replace('/'); return }
-    setTeacher(JSON.parse(saved))
+    const t = JSON.parse(saved) as LoggedInTeacher
+    setTeacher(t)
   }, [router])
+
+  const isAdmin = teacher?.is_admin === true
 
   const fetchData = useCallback(async (teacherId: string) => {
     setLoading(true)
@@ -179,6 +182,49 @@ export default function SummerPage() {
   }
 
   if (!teacher) return null
+
+  // 管理者はこのページから提出させない
+  if (isAdmin) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col">
+        <header
+          className="py-4 px-4 flex items-center justify-between shadow-md sticky top-0 z-20"
+          style={{ backgroundColor: ORANGE }}
+        >
+          <div>
+            <p className="text-white/70 text-xs">糸島学習塾</p>
+            <p className="text-white font-bold text-base">{teacher.name} 先生</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Link href="/admin" className="text-white/90 text-sm underline underline-offset-2">
+              管理画面
+            </Link>
+            <button onClick={handleLogout} className="bg-white/20 text-white text-sm px-3 py-1.5 rounded-lg">
+              ログアウト
+            </button>
+          </div>
+        </header>
+        <main className="flex-1 flex items-center justify-center px-6">
+          <div className="bg-white rounded-2xl shadow p-8 max-w-md text-center">
+            <p className="text-3xl mb-3">🛠</p>
+            <p className="text-lg font-bold text-gray-800 mb-2">
+              管理者は夏期講習シフトを提出する必要はありません
+            </p>
+            <p className="text-sm text-gray-500 mb-6">
+              講師の方々の希望シフトは、管理画面の「夏期講習」タブで確認できます。
+            </p>
+            <Link
+              href="/admin"
+              className="inline-block px-6 py-3 rounded-xl text-white font-bold"
+              style={{ backgroundColor: ORANGE }}
+            >
+              管理画面へ
+            </Link>
+          </div>
+        </main>
+      </div>
+    )
+  }
 
   const rows = buildRows()
   const totalCells = rows.filter(r => r.type === 'date').length * SUMMER_SLOTS.length
