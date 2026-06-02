@@ -32,3 +32,45 @@ INSERT INTO itoshima_teachers (name, password) VALUES
   ('鈴木花子', 'suzuki456'),
   ('田中一郎', 'tanaka789')
 ON CONFLICT DO NOTHING;
+
+-- 3. juku_summer_availability（夏期講習シフト希望）
+-- 2値（出られる/未回答）：レコードがあれば出られる、無ければ未回答
+CREATE TABLE IF NOT EXISTS juku_summer_availability (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  teacher_id uuid NOT NULL REFERENCES itoshima_teachers(id) ON DELETE CASCADE,
+  date date NOT NULL,
+  slot integer NOT NULL CHECK (slot BETWEEN 1 AND 5),
+  created_at timestamp with time zone DEFAULT now(),
+  UNIQUE (teacher_id, date, slot)
+);
+
+ALTER TABLE juku_summer_availability DISABLE ROW LEVEL SECURITY;
+
+CREATE INDEX IF NOT EXISTS idx_juku_summer_availability_date ON juku_summer_availability(date);
+CREATE INDEX IF NOT EXISTS idx_juku_summer_availability_teacher ON juku_summer_availability(teacher_id);
+
+-- 4. juku_summer_apply（保護者からの夏期講習 申込本体）
+-- 保護者が /summer/apply から1回送信するごとに1レコード
+CREATE TABLE IF NOT EXISTS juku_summer_apply (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  student_name text NOT NULL,
+  grade text,
+  notes text,
+  created_at timestamp with time zone DEFAULT now()
+);
+
+-- 5. juku_summer_apply_slots（申込に紐づく希望コマ）
+CREATE TABLE IF NOT EXISTS juku_summer_apply_slots (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  apply_id uuid NOT NULL REFERENCES juku_summer_apply(id) ON DELETE CASCADE,
+  date date NOT NULL,
+  slot integer NOT NULL CHECK (slot BETWEEN 1 AND 5),
+  UNIQUE (apply_id, date, slot)
+);
+
+ALTER TABLE juku_summer_apply DISABLE ROW LEVEL SECURITY;
+ALTER TABLE juku_summer_apply_slots DISABLE ROW LEVEL SECURITY;
+
+CREATE INDEX IF NOT EXISTS idx_juku_summer_apply_created ON juku_summer_apply(created_at);
+CREATE INDEX IF NOT EXISTS idx_juku_summer_apply_slots_apply ON juku_summer_apply_slots(apply_id);
+CREATE INDEX IF NOT EXISTS idx_juku_summer_apply_slots_date ON juku_summer_apply_slots(date);

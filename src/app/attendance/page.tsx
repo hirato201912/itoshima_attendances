@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { GROUP_SLOTS } from '@/types'
+import { GROUP_SLOTS, SUMMER_PERIOD } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
 function today() {
@@ -33,6 +33,7 @@ export default function AttendancePage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showInstallBanner, setShowInstallBanner] = useState(false)
+  const [showSummerBanner, setShowSummerBanner] = useState(false)
 
   useEffect(() => {
     const saved = localStorage.getItem('juku_teacher')
@@ -46,6 +47,10 @@ export default function AttendancePage() {
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches
     const dismissed = localStorage.getItem('juku_install_banner_dismissed') === '1'
     setShowInstallBanner(!isStandalone && !dismissed)
+
+    // 夏期講習バナー：期間終了まで表示
+    const todayDate = today()
+    setShowSummerBanner(todayDate <= SUMMER_PERIOD.end)
 
     // 本日送信済みか確認
     supabase
@@ -167,6 +172,9 @@ export default function AttendancePage() {
           <Link href="/shift" className="text-white/90 text-sm underline underline-offset-2">
             空き時間登録
           </Link>
+          <Link href="/summer" className="text-white/90 text-sm underline underline-offset-2">
+            夏期講習
+          </Link>
           <Link href="/history" className="text-white/90 text-sm underline underline-offset-2">
             勤怠履歴
           </Link>
@@ -180,6 +188,27 @@ export default function AttendancePage() {
       </header>
 
       <main className="max-w-lg mx-auto px-4 py-6">
+
+        {showSummerBanner && (
+          <Link
+            href="/summer"
+            className="mb-4 block rounded-2xl p-4 shadow-md text-white transition-transform active:scale-[0.98]"
+            style={{ background: 'linear-gradient(135deg, #FF7F00 0%, #FF9933 100%)' }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-white/80 mb-0.5">夏期講習シフトのお知らせ</p>
+                <p className="text-base font-bold leading-snug">
+                  出られる日・時間帯を提出してください
+                </p>
+                <p className="text-xs text-white/85 mt-1">
+                  7/21（火）〜 8/28（金）の希望を入力 ›
+                </p>
+              </div>
+              <div className="shrink-0 text-2xl font-bold">›</div>
+            </div>
+          </Link>
+        )}
 
         {showInstallBanner && (
           <div className="mb-4 bg-white rounded-2xl border border-orange-200 px-4 py-3 flex items-center justify-between gap-3">
