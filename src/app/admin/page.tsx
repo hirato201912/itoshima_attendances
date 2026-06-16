@@ -1247,6 +1247,8 @@ export default function AdminPage() {
           const start = new Date(SUMMER_PERIOD.start + 'T00:00:00')
           const end = new Date(SUMMER_PERIOD.end + 'T00:00:00')
           for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+            const dow = d.getDay()
+            if (dow === 0 || dow === 6) continue
             const y = d.getFullYear()
             const m = String(d.getMonth() + 1).padStart(2, '0')
             const day = String(d.getDate()).padStart(2, '0')

@@ -23,6 +23,8 @@ function buildRows(): Row[] {
   const end = new Date(SUMMER_PERIOD.end + 'T00:00:00')
   const insertedRanges = new Set<string>()
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dow = d.getDay()
+    if (dow === 0 || dow === 6) continue
     const y = d.getFullYear()
     const m = String(d.getMonth() + 1).padStart(2, '0')
     const day = String(d.getDate()).padStart(2, '0')
@@ -44,7 +46,7 @@ function buildRows(): Row[] {
       }
       continue
     }
-    rows.push({ type: 'date', date: ds, dow: d.getDay() })
+    rows.push({ type: 'date', date: ds, dow })
   }
   return rows
 }
