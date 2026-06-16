@@ -21,6 +21,8 @@ function buildRows(): Row[] {
   const end = new Date(SUMMER_PERIOD.end + 'T00:00:00')
   const insertedRanges = new Set<string>()
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dow = d.getDay()
+    if (dow === 0 || dow === 6) continue
     const y = d.getFullYear()
     const m = String(d.getMonth() + 1).padStart(2, '0')
     const day = String(d.getDate()).padStart(2, '0')
@@ -42,10 +44,20 @@ function buildRows(): Row[] {
       }
       continue
     }
-    rows.push({ type: 'date', date: ds, dow: d.getDay() })
+    rows.push({ type: 'date', date: ds, dow })
   }
   return rows
 }
+
+const COURSE_NAMES: Record<number, string> = {
+  4: '必修コース',
+  8: '標準コース',
+  12: '充実コース',
+}
+
+const MAIN_SLOTS = new Set<number>([2, 3])
+const isMainSlot = (slot: number) => MAIN_SLOTS.has(slot)
+const ALL_SLOT_NUMS = SUMMER_SLOTS.map(s => s.slot)
 
 const PRICE_TABLE: ReadonlyArray<{
   grade: string
@@ -57,18 +69,16 @@ const PRICE_TABLE: ReadonlyArray<{
   ]},
   { grade: '中1', items: [
     { amount: 13730, sessions: 4 },
-    { amount: 19505, sessions: 6 },
     { amount: 25280, sessions: 8 },
   ]},
   { grade: '中2', items: [
     { amount: 14280, sessions: 4 },
-    { amount: 20055, sessions: 6 },
     { amount: 25830, sessions: 8 },
   ]},
   { grade: '中3', items: [
     { amount: 14830, sessions: 4 },
-    { amount: 20880, sessions: 6 },
     { amount: 26930, sessions: 8 },
+    { amount: 44490, sessions: 12 },
   ]},
   { grade: '高1', items: [
     { amount: 15930, sessions: 4 },
@@ -80,7 +90,6 @@ const PRICE_TABLE: ReadonlyArray<{
   ]},
   { grade: '高3', items: [
     { amount: 19230, sessions: 4 },
-    { amount: 26380, sessions: 6 },
     { amount: 33530, sessions: 8 },
   ]},
 ]
@@ -127,15 +136,21 @@ export default function SummerApplyPage() {
     setSelected(next)
   }
 
-  const setRowAll = (date: string, on: boolean) => {
+  const setSlotsForDate = (date: string, slots: number[], on: boolean) => {
     const next = new Set(selected)
-    for (const s of SUMMER_SLOTS) {
-      const key = `${date}_${s.slot}`
+    for (const slot of slots) {
+      const key = `${date}_${slot}`
       if (on) next.add(key)
       else next.delete(key)
     }
     setSelected(next)
   }
+
+  const mainCount = useMemo(
+    () => Array.from(selected).filter(k => isMainSlot(parseInt(k.split('_')[1]))).length,
+    [selected]
+  )
+  const reserveCount = selected.size - mainCount
 
   const handleGoConfirm = () => {
     setError(null)
@@ -208,12 +223,13 @@ export default function SummerApplyPage() {
     setError(null)
     setDone(false)
     setConfirming(false)
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   if (confirming && !done) {
     const groups = groupSelectedByDate(selected)
-    const slotLabelMap: Record<number, string> = {}
-    for (const s of SUMMER_SLOTS) slotLabelMap[s.slot] = s.label
+    const slotInfoMap: Record<number, { label: string; start: string; end: string }> = {}
+    for (const s of SUMMER_SLOTS) slotInfoMap[s.slot] = { label: s.label, start: s.start, end: s.end }
     return (
       <div className="min-h-screen bg-gray-50 pb-28">
         <header
@@ -227,6 +243,27 @@ export default function SummerApplyPage() {
         <main className="max-w-lg mx-auto px-4 py-5 space-y-4">
           <div className="bg-white rounded-2xl shadow-sm px-4 py-3 text-sm text-gray-700 leading-relaxed">
             以下の内容で送信します。よろしければ画面下の「この内容で送信する」を押してください。
+          </div>
+
+          {/* スクリーンショットのお願い */}
+          <div
+            className="rounded-2xl border-2 px-4 py-3 shadow-sm"
+            style={{ borderColor: ORANGE, backgroundColor: '#FFF7ED' }}
+          >
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <span
+                className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                style={{ backgroundColor: ORANGE, color: 'white' }}
+              >
+                お願い
+              </span>
+              <h3 className="text-sm font-bold" style={{ color: '#9A3412' }}>
+                送信前にスクリーンショットを
+              </h3>
+            </div>
+            <p className="text-xs text-gray-800 leading-relaxed">
+              <span className="font-bold">送信ボタンを押す前に、念のためこの画面のスクリーンショットを撮っておく</span>と、あとからご家族でご確認いただけて安心です。
+            </p>
           </div>
 
           {/* お名前・学年 */}
@@ -243,34 +280,66 @@ export default function SummerApplyPage() {
 
           {/* 希望コマ */}
           <section className="bg-white rounded-2xl shadow-sm px-4 py-4">
-            <div className="flex items-baseline justify-between mb-3">
+            <div className="flex items-baseline justify-between mb-2">
               <div className="text-sm font-bold text-gray-800">希望の日・時間帯</div>
               <div className="text-xs text-gray-500">
                 合計 <span className="font-bold text-gray-800">{selected.size}</span> コマ
               </div>
             </div>
-            <div className="space-y-1.5">
+            <div className="flex items-center gap-3 mb-3 text-[11px] text-gray-600">
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: ORANGE }}></span>
+                メイン {mainCount}コマ
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block w-3 h-3 rounded border border-gray-300" style={{ backgroundColor: '#f3f4f6' }}></span>
+                予備 {reserveCount}コマ
+              </span>
+            </div>
+            <div className="space-y-3">
               {groups.map(g => {
                 const dayLabel = '日月火水木金土'[g.dow]
                 const dayNum = parseInt(g.date.split('-')[2])
                 const month = parseInt(g.date.split('-')[1])
                 const dowColor = g.dow === 0 ? '#ef4444' : g.dow === 6 ? '#3b82f6' : '#374151'
                 return (
-                  <div key={g.date} className="flex items-center gap-2 py-1 border-b border-gray-100 last:border-b-0">
-                    <div className="w-16 shrink-0 text-sm tabular-nums" style={{ color: dowColor }}>
-                      <span className="font-semibold">{month}/{dayNum}</span>
+                  <div key={g.date} className="pb-2 border-b border-gray-100 last:border-b-0 last:pb-0">
+                    <div className="text-sm tabular-nums mb-1.5" style={{ color: dowColor }}>
+                      <span className="font-bold">{month}/{dayNum}</span>
                       <span className="ml-1 text-xs">({dayLabel})</span>
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {g.slots.map(slot => (
-                        <span
-                          key={slot}
-                          className="inline-flex items-center justify-center min-w-7 px-2 py-0.5 rounded-md text-sm font-bold"
-                          style={{ backgroundColor: '#FFF7ED', color: ORANGE, border: `1px solid ${ORANGE}` }}
-                        >
-                          {slotLabelMap[slot]}
-                        </span>
-                      ))}
+                    <div className="space-y-1 pl-1">
+                      {g.slots.map(slot => {
+                        const main = isMainSlot(slot)
+                        const info = slotInfoMap[slot]
+                        return (
+                          <div key={slot} className="flex items-center gap-2 text-sm">
+                            <span
+                              className="inline-flex items-center justify-center w-7 h-7 rounded-md font-bold text-sm shrink-0"
+                              style={
+                                main
+                                  ? { backgroundColor: ORANGE, color: 'white' }
+                                  : { backgroundColor: 'white', color: '#6b7280', border: '1px solid #d1d5db' }
+                              }
+                            >
+                              {info.label}
+                            </span>
+                            <span className="tabular-nums font-semibold text-gray-800">
+                              {info.start}〜{info.end}
+                            </span>
+                            <span
+                              className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-md shrink-0"
+                              style={
+                                main
+                                  ? { backgroundColor: ORANGE, color: 'white' }
+                                  : { backgroundColor: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }
+                              }
+                            >
+                              {main ? 'メイン' : '予備'}
+                            </span>
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
                 )
@@ -345,7 +414,7 @@ export default function SummerApplyPage() {
           <p className="text-white/80 text-xs">糸島学習塾</p>
           <p className="text-white font-bold text-base">夏期講習 お申込みフォーム</p>
         </header>
-        <main className="max-w-lg mx-auto px-4 py-10">
+        <main className="max-w-lg mx-auto px-4 py-10 space-y-4">
           <div className="bg-white rounded-2xl shadow-sm p-6 text-center">
             <div
               className="mx-auto w-14 h-14 rounded-full flex items-center justify-center mb-4 text-white text-3xl font-bold"
@@ -353,20 +422,41 @@ export default function SummerApplyPage() {
             >
               ✓
             </div>
-            <h2 className="text-lg font-bold text-gray-800 mb-2">
+            <h2 className="text-lg font-bold text-gray-800">
               送信ありがとうございました
             </h2>
-            <p className="text-sm text-gray-600 leading-relaxed">
-              内容を確認のうえ、塾より日程と料金をご案内いたします。<br />
-              ご兄弟など別のお子さんの申込がある場合は<br />
-              下のボタンからもう一度ご入力いただけます。
+          </div>
+
+          {/* このあとの流れ */}
+          <div
+            className="rounded-2xl border-2 px-4 py-4 shadow-sm"
+            style={{ borderColor: ORANGE, backgroundColor: '#FFF7ED' }}
+          >
+            <div className="flex items-center gap-1.5 mb-2">
+              <span
+                className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                style={{ backgroundColor: ORANGE, color: 'white' }}
+              >
+                お知らせ
+              </span>
+              <h3 className="text-sm font-bold" style={{ color: '#9A3412' }}>
+                このあとの流れ
+              </h3>
+            </div>
+            <p className="text-sm text-gray-800 leading-relaxed">
+              塾でお申込み内容を確認のうえ、<span className="font-bold">お席を調整</span>させていただきます。
+              確定した<span className="font-bold">お時間帯</span>などを改めてご連絡いたしますので、今しばらくお待ちくださいませ。
             </p>
+          </div>
+
+          {/* 最初の画面に戻るリンク */}
+          <div className="text-center pt-2">
             <button
+              type="button"
               onClick={handleReset}
-              className="mt-6 w-full py-3 rounded-xl text-white font-bold text-base"
-              style={{ backgroundColor: ORANGE }}
+              className="text-sm text-gray-500 underline underline-offset-4 active:text-gray-700"
             >
-              別のお子さんの申込をする
+              ← 最初の画面に戻る
             </button>
           </div>
         </main>
@@ -407,16 +497,32 @@ export default function SummerApplyPage() {
           </ol>
         </section>
 
-        {/* 入力のご案内 */}
-        <div className="bg-white rounded-2xl shadow-sm px-4 py-4 text-sm text-gray-700 leading-relaxed">
+        {/* お申込みのお願い（申込順・候補多め） */}
+        <section
+          className="rounded-2xl shadow-sm px-4 py-4 border-2"
+          style={{ backgroundColor: '#FFFBEB', borderColor: '#F59E0B' }}
+        >
+          <h2 className="text-sm font-bold mb-2" style={{ color: '#92400E' }}>
+            お申込みのお願い
+          </h2>
+          <div className="text-sm text-gray-800 leading-relaxed space-y-2">
+            <p>
+              申込期限は特に設けておりませんが、<span className="font-bold">お申込みいただいた順にお席をご用意</span>します。
+              ご希望の日程でお席を確保しやすいよう、<span className="font-bold">できるだけ早めに</span>お申込みください。
+            </p>
+            <div className="rounded-xl px-3 py-2.5 text-[13px] leading-relaxed bg-white border border-amber-200">
+              <span className="font-bold text-gray-800">候補日はできるだけたくさんお選びください。</span>
+              <span className="block font-normal text-xs mt-1 text-gray-600">
+                候補が多いほどお席のご用意がしやすくなり、ご希望に沿った日程をご提案できる可能性が高まります。
+              </span>
+            </div>
+          </div>
+        </section>
+
+        {/* 入力の流れ */}
+        <div className="bg-white rounded-2xl shadow-sm px-4 py-3 text-sm text-gray-700 leading-relaxed">
           来られそうな日・時間帯をお選びいただき、最後に「入力内容を確認する」ボタンを押してください。
           いただいた希望をもとに、塾から日程をご提案します。
-          <div className="mt-3 rounded-xl px-3 py-2.5 text-[13px] font-bold leading-relaxed bg-gray-100 text-gray-800">
-            できるだけ多くの候補をお選びください。
-            <span className="block font-normal text-xs mt-1 text-gray-600">
-              候補が少ないと、ご希望に沿った日程をご提案できない場合があります。
-            </span>
-          </div>
         </div>
 
         {/* 料金について */}
@@ -426,29 +532,69 @@ export default function SummerApplyPage() {
           </h2>
           <div className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-700 leading-relaxed mb-3 text-center">
             <span className="font-bold">8月のお支払い金額</span><br />
-            <span className="text-gray-600">＝ 通常の月謝 ＋ 夏期講習の料金（下表）</span>
+            ＝ 通常の月謝 ＋
+            <span className="font-bold ml-1" style={{ color: ORANGE }}>夏期講習の料金（下表）</span>
+          </div>
+
+          {/* コース名の凡例 */}
+          <div className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-2 mb-3 text-[11px] text-gray-700 leading-relaxed">
+            <span className="font-bold">コース名：</span>
+            <span className="ml-1">4回＝<span className="font-bold">必修</span></span>
+            <span className="ml-2">8回＝<span className="font-bold">標準</span></span>
+            <span className="ml-2">12回＝<span className="font-bold">充実</span></span>
           </div>
 
           <div className="border border-gray-200 rounded-xl divide-y divide-gray-100 overflow-hidden">
             {PRICE_TABLE.map(g => (
-              <div key={g.grade} className="flex items-start px-3 py-2.5">
-                <div className="w-14 shrink-0 text-sm font-bold text-gray-700 pt-0.5">
+              <div key={g.grade} className="px-3 py-2.5">
+                <div className="text-sm font-bold text-gray-700 mb-1.5">
                   {g.grade}
                 </div>
-                <div className="flex-1 flex flex-wrap gap-x-3 gap-y-1">
+                <div className="flex flex-wrap gap-x-3 gap-y-1.5 pl-1">
                   {g.items.map(it => (
-                    <div key={it.sessions} className="flex items-baseline gap-1 tabular-nums">
-                      <span className="text-sm font-bold" style={{ color: ORANGE }}>
-                        {it.amount.toLocaleString()}円
+                    <div key={it.sessions} className="flex flex-col tabular-nums">
+                      <span className="text-[10px] text-gray-500 leading-tight">
+                        {COURSE_NAMES[it.sessions]}（{it.sessions}回）
                       </span>
-                      <span className="text-xs text-gray-500">
-                        （{it.sessions}回）
+                      <span className="text-sm font-bold leading-tight" style={{ color: ORANGE }}>
+                        {it.amount.toLocaleString()}円
                       </span>
                     </div>
                   ))}
                 </div>
               </div>
             ))}
+          </div>
+
+          {/* 中3から継続の高1の生徒さん向けお知らせ */}
+          <div
+            className="mt-3 rounded-xl border-2 px-3 py-3"
+            style={{ borderColor: ORANGE, backgroundColor: '#FFF7ED' }}
+          >
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <span
+                className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                style={{ backgroundColor: ORANGE, color: 'white' }}
+              >
+                お知らせ
+              </span>
+              <h3 className="text-sm font-bold" style={{ color: '#9A3412' }}>
+                中3から継続の高1の方へ
+              </h3>
+            </div>
+            <p className="text-xs text-gray-800 leading-relaxed mb-2">
+              中学3年生から続けて通っている高1の生徒さんは、<span className="font-bold">中3生と同じ料金</span>でお受けいただけます。
+            </p>
+            <div className="bg-white border border-orange-200 rounded-lg px-3 py-2 flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
+              <div className="flex flex-col">
+                <span className="text-[10px] text-gray-500 leading-tight">必修コース（4回）</span>
+                <span className="text-sm font-bold leading-tight" style={{ color: ORANGE }}>14,830円</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-[10px] text-gray-500 leading-tight">標準コース（8回）</span>
+                <span className="text-sm font-bold leading-tight" style={{ color: ORANGE }}>26,930円</span>
+              </div>
+            </div>
           </div>
 
           <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
@@ -510,33 +656,82 @@ export default function SummerApplyPage() {
             来られそうな枠を<span className="font-bold">できるだけたくさん</span>タップしてください。
           </p>
           <p className="text-[11px] text-gray-500 mb-3 leading-relaxed">
-            候補が少ないと、ご希望に沿った日程をご提案できないことがあります。<br />
-            「全○」ボタンでその日全コマをまとめて選べます。
+            「全○」ボタンでその日のコマをまとめて選べます。土日は塾がお休みのため入力できません。
           </p>
 
+          {/* メイン・予備の案内 */}
+          <div className="rounded-xl px-3 py-3 mb-3 border-2 text-sm leading-relaxed" style={{ backgroundColor: '#FFF7ED', borderColor: ORANGE }}>
+            <p className="text-gray-800">
+              夏期講習は主に <span className="font-bold" style={{ color: ORANGE }}>②・③の時間帯（メイン）</span> で行います。可能な限りたくさんお選びください。
+            </p>
+            <p className="text-xs text-gray-700 mt-1.5 leading-relaxed">
+              お席の都合がつかない場合に <span className="font-bold">①・④・⑤（予備）を組み合わせて</span> ご調整することがあります。
+              予備にも来られそうな枠があれば、お席のご用意がしやすくなります。
+            </p>
+          </div>
+
           {/* 時間帯の凡例 */}
-          <div className="bg-orange-50 rounded-xl px-3 py-2 mb-3 grid grid-cols-1 gap-1 text-xs text-gray-700">
-            {SUMMER_SLOTS.map(s => (
-              <div key={s.slot} className="flex items-center gap-2 tabular-nums">
-                <span className="font-bold w-5 text-center" style={{ color: ORANGE }}>{s.label}</span>
-                <span>{s.start}〜{s.end}</span>
-              </div>
-            ))}
+          <div className="rounded-xl px-3 py-2 mb-3 border border-gray-200 space-y-1 text-xs text-gray-700">
+            {SUMMER_SLOTS.map(s => {
+              const main = isMainSlot(s.slot)
+              return (
+                <div key={s.slot} className="flex items-center gap-2 tabular-nums">
+                  <span className="font-bold w-5 text-center" style={{ color: main ? ORANGE : '#9ca3af' }}>{s.label}</span>
+                  <span className={main ? 'text-gray-800 font-semibold' : 'text-gray-500'}>{s.start}〜{s.end}</span>
+                  <span
+                    className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-md"
+                    style={
+                      main
+                        ? { backgroundColor: ORANGE, color: 'white' }
+                        : { backgroundColor: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }
+                    }
+                  >
+                    {main ? 'メイン' : '予備'}
+                  </span>
+                </div>
+              )
+            })}
           </div>
 
           {/* マトリクス */}
           <div className="border border-gray-200 rounded-xl overflow-hidden">
             {/* ヘッダー行 */}
-            <div className="flex items-center bg-orange-50 px-1.5 py-2 text-[11px] font-bold text-gray-600 border-b border-gray-200">
-              <div className="w-12 shrink-0 pl-1">日付</div>
-              {SUMMER_SLOTS.map(s => (
-                <div key={s.slot} className="flex-1 text-center" style={{ color: ORANGE }}>
-                  {s.label}
-                </div>
-              ))}
-              <div className="w-10 shrink-0 text-center text-[9px] text-gray-500">一括</div>
+            <div className="flex items-stretch bg-gray-50 px-1.5 pt-2 pb-1.5 text-[11px] font-bold text-gray-600 border-b border-gray-200">
+              <div className="w-12 shrink-0 pl-1 flex items-center">日付</div>
+              {SUMMER_SLOTS.map(s => {
+                const main = isMainSlot(s.slot)
+                return (
+                  <div
+                    key={s.slot}
+                    className="flex-1 flex flex-col items-center justify-end gap-0.5 py-0.5"
+                    style={{ backgroundColor: main ? '#FFF7ED' : undefined }}
+                  >
+                    <span
+                      style={{
+                        color: main ? ORANGE : '#9ca3af',
+                        fontSize: main ? '16px' : '11px',
+                        fontWeight: 700,
+                        lineHeight: 1,
+                      }}
+                    >
+                      {s.label}
+                    </span>
+                    <span
+                      style={
+                        main
+                          ? { backgroundColor: ORANGE, color: 'white', padding: '2px 5px', borderRadius: '4px', fontSize: '10px', fontWeight: 700, lineHeight: 1 }
+                          : { backgroundColor: '#f3f4f6', color: '#9ca3af', padding: '1px 3px', borderRadius: '3px', fontSize: '8px', fontWeight: 700, lineHeight: 1 }
+                      }
+                    >
+                      {main ? 'メイン' : '予備'}
+                    </span>
+                  </div>
+                )
+              })}
+              <div className="w-10 shrink-0 text-center text-[9px] text-gray-500 flex items-center justify-center">一括</div>
             </div>
 
+            {/* 日付行 */}
             <div>
               {rows.map((row, idx) => {
                 if (row.type === 'closed') {
@@ -554,43 +749,51 @@ export default function SummerApplyPage() {
                 const dayNum = parseInt(row.date.split('-')[2])
                 const month = parseInt(row.date.split('-')[1])
                 const dateLabel = `${month}/${dayNum}`
-                const dowColor = dow === 0 ? '#ef4444' : dow === 6 ? '#3b82f6' : '#374151'
-                const rowBg = dow === 0 ? '#FFFAFA' : dow === 6 ? '#F8FAFF' : undefined
-                const rowAllOn = SUMMER_SLOTS.every(s => has(row.date, s.slot))
+                const rowAllOn = ALL_SLOT_NUMS.every(slot => has(row.date, slot))
                 return (
                   <div
                     key={row.date}
-                    className="flex items-center px-1.5 py-1.5 border-b border-gray-100 last:border-b-0"
-                    style={{ backgroundColor: rowBg }}
+                    className="flex items-stretch px-1.5 border-b border-gray-100 last:border-b-0"
                   >
-                    <div className="w-12 shrink-0 pl-1 text-xs tabular-nums" style={{ color: dowColor }}>
+                    <div className="w-12 shrink-0 pl-1 text-xs tabular-nums flex flex-col justify-center text-gray-700">
                       <div className="font-semibold leading-tight">{dateLabel}</div>
-                      <div className="text-[10px] leading-tight">({dayLabel})</div>
+                      <div className="text-[10px] leading-tight text-gray-500">({dayLabel})</div>
                     </div>
                     {SUMMER_SLOTS.map(s => {
+                      const main = isMainSlot(s.slot)
                       const on = has(row.date, s.slot)
                       return (
-                        <div key={s.slot} className="flex-1 flex justify-center">
+                        <div
+                          key={s.slot}
+                          className="flex-1 flex justify-center items-center py-1.5"
+                          style={{ backgroundColor: main ? '#FFFBF5' : undefined }}
+                        >
                           <button
                             type="button"
                             onClick={() => toggleCell(row.date, s.slot)}
-                            className="w-8 h-8 rounded-lg border-2 flex items-center justify-center transition-colors active:scale-95"
+                            className={`${main ? 'w-11 h-11 rounded-lg border-2' : 'w-7 h-7 rounded-md border'} flex items-center justify-center transition-colors active:scale-95`}
                             style={
-                              on
-                                ? { backgroundColor: ORANGE, borderColor: ORANGE, color: 'white' }
-                                : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#d1d5db' }
+                              main
+                                ? on
+                                  ? { backgroundColor: ORANGE, borderColor: ORANGE, color: 'white' }
+                                  : { backgroundColor: 'white', borderColor: '#FDBA74', color: '#FB923C' }
+                                : on
+                                  ? { backgroundColor: '#9ca3af', borderColor: '#9ca3af', color: 'white' }
+                                  : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#d1d5db' }
                             }
-                            aria-label={`${dateLabel} ${s.label} ${on ? '解除' : '選択'}`}
+                            aria-label={`${dateLabel} ${s.label} ${main ? 'メイン' : '予備'} ${on ? '解除' : '選択'}`}
                           >
-                            {on ? <span className="text-base font-bold leading-none">✓</span> : <span className="text-xs">・</span>}
+                            {on
+                              ? <span style={{ fontSize: main ? '20px' : '12px', fontWeight: 700, lineHeight: 1 }}>✓</span>
+                              : <span style={{ fontSize: main ? '12px' : '10px', lineHeight: 1 }}>・</span>}
                           </button>
                         </div>
                       )
                     })}
-                    <div className="w-10 shrink-0 flex justify-center">
+                    <div className="w-10 shrink-0 flex justify-center items-center">
                       <button
                         type="button"
-                        onClick={() => setRowAll(row.date, !rowAllOn)}
+                        onClick={() => setSlotsForDate(row.date, ALL_SLOT_NUMS, !rowAllOn)}
                         className="text-[10px] font-bold px-1.5 py-1 rounded-md border"
                         style={
                           rowAllOn
@@ -607,8 +810,12 @@ export default function SummerApplyPage() {
             </div>
           </div>
 
-          <p className="text-xs text-gray-500 mt-2 text-right">
-            選択中：<span className="font-bold text-gray-800">{selected.size}</span> コマ
+          <p className="text-xs text-gray-500 mt-3 text-right">
+            選択中：
+            <span className="font-bold ml-1" style={{ color: ORANGE }}>メイン {mainCount}</span>
+            <span className="mx-1">/</span>
+            <span className="font-bold text-gray-600">予備 {reserveCount}</span>
+            <span className="ml-2 text-[11px] text-gray-500">（合計 {selected.size} コマ）</span>
           </p>
         </section>
 
