@@ -735,6 +735,104 @@ export default function AdminPage() {
     setDeletingApplyId(null)
   }
 
+  // 講師1人分の夏期講習シフトをCSVダウンロード（紙配布用）
+  const downloadSingleSummerCsv = (teacherInfo: { id: string; name: string; code: number }) => {
+    const headers = ['講師', '日付', '曜日', 'コマ', '時間帯', '状態']
+    const rows = summerRows
+      .filter(r => r.teacher_id === teacherInfo.id)
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date) || a.slot - b.slot)
+    const slotInfoMap: Record<number, { label: string; start: string; end: string }> = {}
+    for (const s of SUMMER_SLOTS) slotInfoMap[s.slot] = { label: s.label, start: s.start, end: s.end }
+    const body: string[][] = []
+    if (rows.length === 0) {
+      body.push([teacherInfo.name, '', '', '', '', '希望コマなし'])
+    } else {
+      rows.forEach((r, idx) => {
+        const [, mm, dd] = r.date.split('-').map(Number)
+        const dow = '日月火水木金土'[new Date(r.date + 'T00:00:00').getDay()]
+        const info = slotInfoMap[r.slot]
+        body.push([
+          idx === 0 ? teacherInfo.name : '',
+          `${mm}/${dd}`,
+          dow,
+          info.label,
+          `${info.start}〜${info.end}`,
+          r.is_confirmed ? '確定' : '希望',
+        ])
+      })
+    }
+    const escape = (s: string) => /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    const csv = [headers, ...body].map(row => row.map(escape).join(',')).join('\r\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const safeName = teacherInfo.name.replace(/[\\/:*?"<>|]/g, '_')
+    a.download = `juku-summer-shift-${safeName}-${todayStr()}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  // 申込1件分のCSVダウンロード（紙配布用：日付ごとに1行）
+  const downloadSingleApplyCsv = (apply: SummerApplyRow) => {
+    const headers = ['お子さんの名前', '学年', '申込日時', '日付', '曜日', 'コマ', '時間帯', 'メイン/予備', '要望']
+    const fmtDateTime = (iso: string) => {
+      const d = new Date(iso)
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      const hh = String(d.getHours()).padStart(2, '0')
+      const mm = String(d.getMinutes()).padStart(2, '0')
+      return `${y}/${m}/${day} ${hh}:${mm}`
+    }
+    const slots = applySlots
+      .filter(s => s.apply_id === apply.id)
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date) || a.slot - b.slot)
+    const slotInfoMap: Record<number, { label: string; start: string; end: string }> = {}
+    for (const s of SUMMER_SLOTS) slotInfoMap[s.slot] = { label: s.label, start: s.start, end: s.end }
+    const createdAt = fmtDateTime(apply.created_at)
+    const notesText = apply.notes ?? ''
+
+    const body: string[][] = []
+    if (slots.length === 0) {
+      body.push([apply.student_name, apply.grade ?? '', createdAt, '', '', '', '', '', notesText])
+    } else {
+      slots.forEach((s, idx) => {
+        const [, mm, dd] = s.date.split('-').map(Number)
+        const dow = '日月火水木金土'[new Date(s.date + 'T00:00:00').getDay()]
+        const info = slotInfoMap[s.slot]
+        const tag = isMainSlot(s.slot) ? 'メイン' : '予備'
+        body.push([
+          idx === 0 ? apply.student_name : '',
+          idx === 0 ? (apply.grade ?? '') : '',
+          idx === 0 ? createdAt : '',
+          `${mm}/${dd}`,
+          dow,
+          info.label,
+          `${info.start}〜${info.end}`,
+          tag,
+          idx === 0 ? notesText : '',
+        ])
+      })
+    }
+    const escape = (s: string) => /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    const csv = [headers, ...body].map(row => row.map(escape).join(',')).join('\r\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const safeName = apply.student_name.replace(/[\\/:*?"<>|]/g, '_')
+    a.download = `juku-summer-apply-${safeName}-${todayStr()}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   // 申込一覧をCSVダウンロード
   const downloadApplyCsv = () => {
     const headers = [
@@ -1524,10 +1622,21 @@ export default function AdminPage() {
                                 <td className="sticky left-0 z-10 px-3 py-2.5 font-medium text-gray-800 whitespace-nowrap"
                                   style={{ backgroundColor: isExpanded ? '#FFF7ED' : 'white' }}
                                 >
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <span className="text-gray-400 text-xs">{isExpanded ? '▼' : '▶'}</span>
-                                    {t.name}
-                                  </span>
+                                  <div className="inline-flex items-center gap-2">
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <span className="text-gray-400 text-xs">{isExpanded ? '▼' : '▶'}</span>
+                                      {t.name}
+                                    </span>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); downloadSingleSummerCsv(t) }}
+                                      disabled={total === 0}
+                                      className="text-[11px] font-bold hover:underline disabled:opacity-30 disabled:cursor-not-allowed"
+                                      style={{ color: ORANGE }}
+                                      title={total === 0 ? '希望コマがありません' : `${t.name} 先生のシフトをCSVダウンロード`}
+                                    >
+                                      CSV
+                                    </button>
+                                  </div>
                                 </td>
                                 <td className="px-2 py-2.5 text-center font-bold tabular-nums whitespace-nowrap"
                                   style={{ color: total === 0 ? '#9ca3af' : '#374151' }}
@@ -1765,13 +1874,22 @@ export default function AdminPage() {
                                   )}
                                 </td>
                                 <td className="px-3 py-2.5 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                                  <button
-                                    onClick={() => handleDeleteApply(r.id, r.student_name)}
-                                    disabled={deletingApplyId === r.id}
-                                    className="text-xs text-red-600 hover:text-red-800 disabled:opacity-40 font-bold"
-                                  >
-                                    {deletingApplyId === r.id ? '削除中…' : '削除'}
-                                  </button>
+                                  <div className="inline-flex items-center gap-3">
+                                    <button
+                                      onClick={() => downloadSingleApplyCsv(r)}
+                                      className="text-xs font-bold hover:underline"
+                                      style={{ color: ORANGE }}
+                                    >
+                                      CSV
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteApply(r.id, r.student_name)}
+                                      disabled={deletingApplyId === r.id}
+                                      className="text-xs text-red-600 hover:text-red-800 disabled:opacity-40 font-bold"
+                                    >
+                                      {deletingApplyId === r.id ? '削除中…' : '削除'}
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                               {isExpanded && (() => {

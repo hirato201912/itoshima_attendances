@@ -340,7 +340,7 @@ export default function SummerPage() {
             </span>
             <span className="inline-flex items-center gap-1">
               <span className="inline-block w-4 h-4 rounded border-2" style={{ backgroundColor: '#16A34A', borderColor: '#16A34A' }}></span>
-              <span><span className="font-bold" style={{ color: '#16A34A' }}>確定</span>（塾長依頼済み・変更不可）</span>
+              <span className="font-bold" style={{ color: '#16A34A' }}>確定</span>
             </span>
           </div>
         </div>
