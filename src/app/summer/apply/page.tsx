@@ -566,38 +566,7 @@ export default function SummerApplyPage() {
             ))}
           </div>
 
-          {/* 中3から継続の高1の生徒さん向けお知らせ */}
-          <div
-            className="mt-3 rounded-xl border-2 px-3 py-3"
-            style={{ borderColor: ORANGE, backgroundColor: '#FFF7ED' }}
-          >
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <span
-                className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                style={{ backgroundColor: ORANGE, color: 'white' }}
-              >
-                お知らせ
-              </span>
-              <h3 className="text-sm font-bold" style={{ color: '#9A3412' }}>
-                中3から継続の高1の方へ
-              </h3>
-            </div>
-            <p className="text-xs text-gray-800 leading-relaxed mb-2">
-              中学3年生から続けて通っている高1の生徒さんは、<span className="font-bold">中3生と同じ料金</span>でお受けいただけます。
-            </p>
-            <div className="bg-white border border-orange-200 rounded-lg px-3 py-2 flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
-              <div className="flex flex-col">
-                <span className="text-[10px] text-gray-500 leading-tight">必修コース（4回）</span>
-                <span className="text-sm font-bold leading-tight" style={{ color: ORANGE }}>14,830円</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[10px] text-gray-500 leading-tight">標準コース（8回）</span>
-                <span className="text-sm font-bold leading-tight" style={{ color: ORANGE }}>26,930円</span>
-              </div>
-            </div>
-          </div>
-
-          <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+          <p className="text-[11px] text-gray-500 mt-3 leading-relaxed">
             ※小学生は学年に関わらず同額です。<br />
             ※正式な金額・受講回数は、お申込み内容を確認のうえ別途ご案内いたします。
           </p>
