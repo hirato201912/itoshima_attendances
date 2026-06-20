@@ -55,6 +55,7 @@ export default function SummerPage() {
   const router = useRouter()
   const [teacher, setTeacher] = useState<LoggedInTeacher | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [confirmed, setConfirmed] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -73,21 +74,37 @@ export default function SummerPage() {
     setLoading(true)
     const { data } = await supabase
       .from('juku_summer_availability')
-      .select('date, slot')
+      .select('date, slot, is_confirmed')
       .eq('teacher_id', teacherId)
       .gte('date', SUMMER_PERIOD.start)
       .lte('date', SUMMER_PERIOD.end)
-    const set = new Set<string>()
-    for (const r of data ?? []) {
-      set.add(`${r.date}_${r.slot}`)
+    const sel = new Set<string>()
+    const conf = new Set<string>()
+    for (const r of (data ?? []) as { date: string; slot: number; is_confirmed: boolean }[]) {
+      const key = `${r.date}_${r.slot}`
+      sel.add(key)
+      if (r.is_confirmed) conf.add(key)
     }
-    setSelected(set)
+    setSelected(sel)
+    setConfirmed(conf)
     setLoading(false)
   }, [])
 
   useEffect(() => {
     if (!teacher) return
     fetchData(teacher.id)
+
+    // 管理画面で「確定」されたら即座に画面に反映するためのリアルタイム購読
+    const channel = supabase
+      .channel(`summer-self-${teacher.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'juku_summer_availability', filter: `teacher_id=eq.${teacher.id}` },
+        () => { fetchData(teacher.id) }
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
   }, [teacher, fetchData])
 
   const showToast = (text: string) => {
@@ -97,10 +114,16 @@ export default function SummerPage() {
   }
 
   const has = (date: string, slot: number) => selected.has(`${date}_${slot}`)
+  const isConfirmed = (date: string, slot: number) => confirmed.has(`${date}_${slot}`)
 
   const toggleCell = async (date: string, slot: number) => {
     if (!teacher || saving) return
     const key = `${date}_${slot}`
+    // 確定済みセルは講師側から変更不可
+    if (confirmed.has(key)) {
+      showToast('このコマは塾長から確定済みです')
+      return
+    }
     const isOn = selected.has(key)
     const next = new Set(selected)
     if (isOn) next.delete(key)
@@ -125,16 +148,22 @@ export default function SummerPage() {
 
   const setRowAll = async (date: string, on: boolean) => {
     if (!teacher || saving) return
+    // 確定済みのコマは触らない
+    const editableSlots = SUMMER_SLOTS.filter(s => !confirmed.has(`${date}_${s.slot}`))
+    if (editableSlots.length === 0) {
+      showToast('この日のコマはすべて確定済みです')
+      return
+    }
     setSaving(true)
     const next = new Set(selected)
-    for (const s of SUMMER_SLOTS) {
+    for (const s of editableSlots) {
       const key = `${date}_${s.slot}`
       if (on) next.add(key)
       else next.delete(key)
     }
     setSelected(next)
     if (on) {
-      const rows = SUMMER_SLOTS.map(s => ({ teacher_id: teacher.id, date, slot: s.slot }))
+      const rows = editableSlots.map(s => ({ teacher_id: teacher.id, date, slot: s.slot }))
       await supabase.from('juku_summer_availability').upsert(rows, { onConflict: 'teacher_id,date,slot' })
     } else {
       await supabase
@@ -142,6 +171,7 @@ export default function SummerPage() {
         .delete()
         .eq('teacher_id', teacher.id)
         .eq('date', date)
+        .in('slot', editableSlots.map(s => s.slot))
     }
     setSaving(false)
     showToast(on ? '✓ この日を全部○にしました' : '✓ この日をクリアしました')
@@ -149,28 +179,35 @@ export default function SummerPage() {
 
   const setAllPeriod = async (on: boolean) => {
     if (!teacher || saving) return
-    if (on && !confirm('全期間・全コマを「出られる」に設定します。よろしいですか？')) return
-    if (!on && !confirm('全期間の希望をすべてクリアします。よろしいですか？')) return
+    if (on && !confirm('全期間・全コマを「出られる」に設定します。よろしいですか？\n（確定済みのコマはそのまま維持されます）')) return
+    if (!on && !confirm('全期間の希望をすべてクリアします。よろしいですか？\n（確定済みのコマはそのまま維持されます）')) return
     setSaving(true)
     const rows = buildRows()
-    const next = new Set<string>()
+    const next = new Set<string>(confirmed) // 確定済みは必ず残す
     if (on) {
       const inserts: { teacher_id: string; date: string; slot: number }[] = []
       for (const r of rows) {
         if (r.type !== 'date') continue
         for (const s of SUMMER_SLOTS) {
-          next.add(`${r.date}_${s.slot}`)
-          inserts.push({ teacher_id: teacher.id, date: r.date, slot: s.slot })
+          const key = `${r.date}_${s.slot}`
+          next.add(key)
+          if (!confirmed.has(key)) {
+            inserts.push({ teacher_id: teacher.id, date: r.date, slot: s.slot })
+          }
         }
       }
       setSelected(next)
-      await supabase.from('juku_summer_availability').upsert(inserts, { onConflict: 'teacher_id,date,slot' })
+      if (inserts.length > 0) {
+        await supabase.from('juku_summer_availability').upsert(inserts, { onConflict: 'teacher_id,date,slot' })
+      }
     } else {
+      // 確定済み以外を削除
       setSelected(next)
       await supabase
         .from('juku_summer_availability')
         .delete()
         .eq('teacher_id', teacher.id)
+        .eq('is_confirmed', false)
         .gte('date', SUMMER_PERIOD.start)
         .lte('date', SUMMER_PERIOD.end)
     }
@@ -291,6 +328,21 @@ export default function SummerPage() {
             出られる日・時間帯のセルをタップしてください。<br />
             予定が変わったらいつでも変更できます（自動保存）。
           </p>
+          {/* 状態の凡例 */}
+          <div className="mt-3 flex items-center gap-3 text-[11px] text-gray-600 flex-wrap">
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block w-4 h-4 rounded border-2" style={{ backgroundColor: ORANGE, borderColor: ORANGE }}></span>
+              出られる
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block w-4 h-4 rounded border-2" style={{ backgroundColor: 'white', borderColor: '#e5e7eb' }}></span>
+              未選択
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block w-4 h-4 rounded border-2" style={{ backgroundColor: '#16A34A', borderColor: '#16A34A' }}></span>
+              <span><span className="font-bold" style={{ color: '#16A34A' }}>確定</span>（塾長依頼済み・変更不可）</span>
+            </span>
+          </div>
         </div>
 
         {/* 時間帯凡例 */}
@@ -373,20 +425,26 @@ export default function SummerPage() {
                     </div>
                     {SUMMER_SLOTS.map(s => {
                       const on = has(row.date, s.slot)
+                      const conf = isConfirmed(row.date, s.slot)
                       return (
                         <div key={s.slot} className="flex-1 flex justify-center">
                           <button
                             onClick={() => toggleCell(row.date, s.slot)}
-                            disabled={saving}
-                            className="w-9 h-9 rounded-lg border-2 flex items-center justify-center transition-colors disabled:opacity-60 active:scale-95"
+                            disabled={saving || conf}
+                            className="w-9 h-9 rounded-lg border-2 flex items-center justify-center transition-colors active:scale-95"
                             style={
-                              on
-                                ? { backgroundColor: ORANGE, borderColor: ORANGE, color: 'white' }
-                                : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#d1d5db' }
+                              conf
+                                ? { backgroundColor: '#16A34A', borderColor: '#16A34A', color: 'white', cursor: 'not-allowed' }
+                                : on
+                                  ? { backgroundColor: ORANGE, borderColor: ORANGE, color: 'white' }
+                                  : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#d1d5db' }
                             }
-                            aria-label={`${dateLabel} ${s.label} ${on ? '解除' : '選択'}`}
+                            aria-label={`${dateLabel} ${s.label} ${conf ? '確定済み（変更不可）' : on ? '解除' : '選択'}`}
+                            title={conf ? '塾長から確定済みのコマです（変更不可）' : undefined}
                           >
-                            {on ? <span className="text-lg font-bold leading-none">✓</span> : <span className="text-xs">・</span>}
+                            {conf ? <span className="text-[10px] font-bold leading-none">確定</span>
+                              : on ? <span className="text-lg font-bold leading-none">✓</span>
+                              : <span className="text-xs">・</span>}
                           </button>
                         </div>
                       )

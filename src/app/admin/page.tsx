@@ -7,6 +7,22 @@ import { supabase } from '@/lib/supabase'
 import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, SUMMER_PERIOD } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
+const MAIN_SLOTS = new Set<number>([2, 3])
+const isMainSlot = (slot: number) => MAIN_SLOTS.has(slot)
+
+type SummerApplyRow = {
+  id: string
+  student_name: string
+  grade: string | null
+  notes: string | null
+  created_at: string
+}
+type SummerApplySlotRow = {
+  apply_id: string
+  date: string
+  slot: number
+}
+
 const ORANGE = '#FF7F00'
 
 const LESSON_COLORS: Record<string, { dot: string; bg: string; text: string }> = {
@@ -257,7 +273,7 @@ type ShiftRow = {
 export default function AdminPage() {
   const router = useRouter()
   const [teacher, setTeacher] = useState<LoggedInTeacher | null>(null)
-  const [activeTab, setActiveTab] = useState<'attendance' | 'shift' | 'summer'>('attendance')
+  const [activeTab, setActiveTab] = useState<'attendance' | 'shift' | 'summer' | 'apply'>('attendance')
 
   // 勤怠タブ
   const [selectedMonth, setSelectedMonth] = useState(currentMonth)
@@ -298,9 +314,22 @@ export default function AdminPage() {
 
   // 夏期講習タブ
   const [summerTeachers, setSummerTeachers] = useState<{ id: string; name: string; code: number }[]>([])
-  const [summerRows, setSummerRows] = useState<{ teacher_id: string; date: string; slot: number }[]>([])
+  const [summerRows, setSummerRows] = useState<{ teacher_id: string; date: string; slot: number; is_confirmed: boolean }[]>([])
   const [summerLoading, setSummerLoading] = useState(false)
   const [expandedSummerTeacher, setExpandedSummerTeacher] = useState<string | null>(null)
+  const [togglingConfirmKey, setTogglingConfirmKey] = useState<string | null>(null)
+
+  // 申込一覧タブ（保護者からの夏期講習申込）
+  const [applyRows, setApplyRows] = useState<SummerApplyRow[]>([])
+  const [applySlots, setApplySlots] = useState<SummerApplySlotRow[]>([])
+  const [applyLoading, setApplyLoading] = useState(false)
+  const [expandedApplyId, setExpandedApplyId] = useState<string | null>(null)
+  const [deletingApplyId, setDeletingApplyId] = useState<string | null>(null)
+  const [bulkDeletingApply, setBulkDeletingApply] = useState(false)
+  // 全件削除のブロック用：CSVを今セッションでダウンロードしたか、確認モーダル開閉、入力テキスト一致
+  const [csvDownloadedThisSession, setCsvDownloadedThisSession] = useState(false)
+  const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false)
+  const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState('')
 
   useEffect(() => {
     const saved = localStorage.getItem('juku_teacher')
@@ -385,12 +414,12 @@ export default function AdminPage() {
           .order('code'),
         supabase
           .from('juku_summer_availability')
-          .select('teacher_id, date, slot')
+          .select('teacher_id, date, slot, is_confirmed')
           .gte('date', SUMMER_PERIOD.start)
           .lte('date', SUMMER_PERIOD.end),
       ])
       setSummerTeachers(teachers ?? [])
-      setSummerRows((rows ?? []) as { teacher_id: string; date: string; slot: number }[])
+      setSummerRows((rows ?? []) as { teacher_id: string; date: string; slot: number; is_confirmed: boolean }[])
       setSummerLoading(false)
     }
 
@@ -403,6 +432,39 @@ export default function AdminPage() {
         { event: '*', schema: 'public', table: 'juku_summer_availability' },
         () => { fetchSummer() }
       )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [teacher])
+
+  // 保護者からの夏期講習申込データ取得＋リアルタイム購読
+  useEffect(() => {
+    if (!teacher) return
+
+    const fetchApply = async () => {
+      setApplyLoading(true)
+      const [{ data: applies }, { data: slots }] = await Promise.all([
+        supabase
+          .from('juku_summer_apply')
+          .select('id, student_name, grade, notes, created_at')
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('juku_summer_apply_slots')
+          .select('apply_id, date, slot'),
+      ])
+      setApplyRows((applies ?? []) as SummerApplyRow[])
+      setApplySlots((slots ?? []) as SummerApplySlotRow[])
+      setApplyLoading(false)
+      // データが更新された＝持っているCSVは古い可能性、再ダウンロードを必須にする
+      setCsvDownloadedThisSession(false)
+    }
+
+    fetchApply()
+
+    const channel = supabase
+      .channel('apply-admin')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'juku_summer_apply' }, () => { fetchApply() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'juku_summer_apply_slots' }, () => { fetchApply() })
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
@@ -619,6 +681,120 @@ export default function AdminPage() {
     URL.revokeObjectURL(url)
   }
 
+  // 夏期講習：講師×日付×コマの確定状態をトグル
+  const toggleSummerConfirm = async (teacherId: string, date: string, slot: number, current: boolean) => {
+    const key = `${teacherId}_${date}_${slot}`
+    if (togglingConfirmKey) return
+    setTogglingConfirmKey(key)
+    // 楽観的更新
+    setSummerRows(prev => prev.map(r =>
+      r.teacher_id === teacherId && r.date === date && r.slot === slot
+        ? { ...r, is_confirmed: !current }
+        : r
+    ))
+    await supabase
+      .from('juku_summer_availability')
+      .update({ is_confirmed: !current })
+      .eq('teacher_id', teacherId)
+      .eq('date', date)
+      .eq('slot', slot)
+    setTogglingConfirmKey(null)
+  }
+
+  // 全件削除モーダルを開く（CSVダウンロード済みのときだけ押せる）
+  const openBulkDeleteModal = () => {
+    if (applyRows.length === 0 || !csvDownloadedThisSession) return
+    setBulkDeleteConfirmText('')
+    setBulkDeleteModalOpen(true)
+  }
+
+  // 全件削除モーダル内：「削除します」と一致したら実行
+  const executeBulkDeleteApply = async () => {
+    if (bulkDeleteConfirmText !== '削除します') return
+    if (applyRows.length === 0) return
+    setBulkDeletingApply(true)
+    // 全件削除：created_at は必ず存在するためフィルタとして利用
+    await supabase.from('juku_summer_apply').delete().gte('created_at', '1900-01-01')
+    setApplyRows([])
+    setApplySlots([])
+    setExpandedApplyId(null)
+    setCsvDownloadedThisSession(false)
+    setBulkDeletingApply(false)
+    setBulkDeleteModalOpen(false)
+    setBulkDeleteConfirmText('')
+  }
+
+  // 申込を削除（CASCADEで slots も消える）
+  const handleDeleteApply = async (applyId: string, studentName: string) => {
+    if (!confirm(`「${studentName}」さんの申込を削除しますか？\n（希望コマも含めてすべて削除されます）`)) return
+    setDeletingApplyId(applyId)
+    setApplyRows(prev => prev.filter(r => r.id !== applyId))
+    setApplySlots(prev => prev.filter(s => s.apply_id !== applyId))
+    if (expandedApplyId === applyId) setExpandedApplyId(null)
+    await supabase.from('juku_summer_apply').delete().eq('id', applyId)
+    setDeletingApplyId(null)
+  }
+
+  // 申込一覧をCSVダウンロード
+  const downloadApplyCsv = () => {
+    const headers = [
+      '申込日時', 'お子さんの名前', '学年',
+      'メインコマ数', '予備コマ数', '合計コマ数',
+      '希望コマ一覧', '要望',
+    ]
+    const slotsByApply = new Map<string, SummerApplySlotRow[]>()
+    for (const s of applySlots) {
+      const list = slotsByApply.get(s.apply_id) ?? []
+      list.push(s)
+      slotsByApply.set(s.apply_id, list)
+    }
+    const fmtDateTime = (iso: string) => {
+      const d = new Date(iso)
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      const hh = String(d.getHours()).padStart(2, '0')
+      const mm = String(d.getMinutes()).padStart(2, '0')
+      return `${y}/${m}/${day} ${hh}:${mm}`
+    }
+    const slotLabelOf = (n: number) => SUMMER_SLOTS.find(s => s.slot === n)?.label ?? `${n}`
+    const body = applyRows.map(r => {
+      const slots = (slotsByApply.get(r.id) ?? []).slice().sort((a, b) =>
+        a.date.localeCompare(b.date) || a.slot - b.slot
+      )
+      const mainCount = slots.filter(s => isMainSlot(s.slot)).length
+      const reserveCount = slots.length - mainCount
+      const slotsLabel = slots.map(s => {
+        const [, mm, dd] = s.date.split('-').map(Number)
+        const tag = isMainSlot(s.slot) ? 'メイン' : '予備'
+        return `${mm}/${dd} ${slotLabelOf(s.slot)}(${tag})`
+      }).join(' / ')
+      return [
+        fmtDateTime(r.created_at),
+        r.student_name,
+        r.grade ?? '',
+        String(mainCount),
+        String(reserveCount),
+        String(slots.length),
+        slotsLabel,
+        r.notes ?? '',
+      ]
+    })
+    const escape = (s: string) => /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    const csv = [headers, ...body].map(row => row.map(escape).join(',')).join('\r\n')
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const today = todayStr()
+    a.download = `juku-summer-apply-${today}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    setCsvDownloadedThisSession(true)
+  }
+
   const handleLogout = () => {
     localStorage.removeItem('juku_teacher')
     router.push('/')
@@ -651,8 +827,11 @@ export default function AdminPage() {
       {/* タブバー */}
       <div className="border-b border-gray-200 bg-white">
         <div className="max-w-screen-xl mx-auto px-6 flex gap-1 pt-2">
-          {(['attendance', 'shift', 'summer'] as const).map((tab) => {
-            const label = tab === 'attendance' ? '勤怠管理' : tab === 'shift' ? '空き時間帯' : '夏期講習'
+          {(['attendance', 'shift', 'summer', 'apply'] as const).map((tab) => {
+            const label = tab === 'attendance' ? '勤怠管理'
+              : tab === 'shift' ? '空き時間帯'
+              : tab === 'summer' ? '夏期講習'
+              : '申込一覧'
             return (
               <button
                 key={tab}
@@ -1273,6 +1452,12 @@ export default function AdminPage() {
 
           // 講師×日付×スロットの詳細マップ
           const cellSet = new Set(summerRows.map(r => `${r.teacher_id}_${r.date}_${r.slot}`))
+          const confirmedSet = new Set(summerRows.filter(r => r.is_confirmed).map(r => `${r.teacher_id}_${r.date}_${r.slot}`))
+          // 講師ごとの確定セル数
+          const confirmedByTeacher = new Map<string, number>()
+          for (const r of summerRows) {
+            if (r.is_confirmed) confirmedByTeacher.set(r.teacher_id, (confirmedByTeacher.get(r.teacher_id) ?? 0) + 1)
+          }
 
           const formatDateShort = (ds: string) => {
             const [, m, d] = ds.split('-').map(Number)
@@ -1348,6 +1533,11 @@ export default function AdminPage() {
                                   style={{ color: total === 0 ? '#9ca3af' : '#374151' }}
                                 >
                                   {total}<span className="text-gray-400 font-normal">/{totalPossible}</span>
+                                  {(confirmedByTeacher.get(t.id) ?? 0) > 0 && (
+                                    <div className="text-[10px] font-bold mt-0.5" style={{ color: '#16A34A' }}>
+                                      確定 {confirmedByTeacher.get(t.id)}
+                                    </div>
+                                  )}
                                 </td>
                                 {dates.map(ds => {
                                   const c = countMap.get(`${t.id}_${ds}`) ?? 0
@@ -1367,7 +1557,20 @@ export default function AdminPage() {
                               {isExpanded && (
                                 <tr className="bg-orange-50/30">
                                   <td colSpan={2 + dates.length} className="px-4 py-3">
-                                    <div className="text-xs text-gray-600 mb-2 font-bold">{t.name} 先生 のコマごとの希望</div>
+                                    <div className="flex items-baseline gap-3 mb-2 flex-wrap">
+                                      <div className="text-xs text-gray-600 font-bold">{t.name} 先生 のコマごとの希望</div>
+                                      <div className="text-[11px] text-gray-500">
+                                        セルをクリックすると <span className="font-bold" style={{ color: '#16A34A' }}>確定</span> ⇄ <span className="font-bold" style={{ color: ORANGE }}>希望</span> を切り替えできます
+                                      </div>
+                                      <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                                        <span className="inline-flex items-center gap-1">
+                                          <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: ORANGE }} />希望
+                                        </span>
+                                        <span className="inline-flex items-center gap-1">
+                                          <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#16A34A' }} />確定
+                                        </span>
+                                      </div>
+                                    </div>
                                     <div className="overflow-x-auto">
                                       <table className="text-xs">
                                         <thead>
@@ -1387,11 +1590,22 @@ export default function AdminPage() {
                                                 {s.label}　<span className="text-gray-500 font-normal">{s.start}〜{s.end}</span>
                                               </td>
                                               {dates.map(ds => {
-                                                const on = cellSet.has(`${t.id}_${ds}_${s.slot}`)
+                                                const key = `${t.id}_${ds}_${s.slot}`
+                                                const on = cellSet.has(key)
+                                                const conf = confirmedSet.has(key)
+                                                const isToggling = togglingConfirmKey === key
                                                 return (
                                                   <td key={ds} className="px-1.5 py-1 text-center">
                                                     {on ? (
-                                                      <span className="inline-block w-5 h-5 rounded text-white text-xs font-bold leading-5" style={{ backgroundColor: ORANGE }}>✓</span>
+                                                      <button
+                                                        onClick={() => toggleSummerConfirm(t.id, ds, s.slot, conf)}
+                                                        disabled={isToggling}
+                                                        className="inline-flex items-center justify-center w-6 h-6 rounded text-white text-[10px] font-bold leading-none disabled:opacity-50 hover:opacity-90 active:scale-95 transition-transform"
+                                                        style={{ backgroundColor: conf ? '#16A34A' : ORANGE }}
+                                                        title={conf ? 'クリックで「希望」に戻す' : 'クリックで「確定」にする'}
+                                                      >
+                                                        {conf ? '確定' : '✓'}
+                                                      </button>
                                                     ) : (
                                                       <span className="text-gray-300">・</span>
                                                     )}
@@ -1425,7 +1639,292 @@ export default function AdminPage() {
           )
         })()}
 
+        {/* ===== 申込一覧タブ（保護者からの夏期講習申込） ===== */}
+        {activeTab === 'apply' && (() => {
+          const slotsByApply = new Map<string, SummerApplySlotRow[]>()
+          for (const s of applySlots) {
+            const list = slotsByApply.get(s.apply_id) ?? []
+            list.push(s)
+            slotsByApply.set(s.apply_id, list)
+          }
+          const fmtDateTime = (iso: string) => {
+            const d = new Date(iso)
+            const mm = String(d.getMonth() + 1).padStart(2, '0')
+            const dd = String(d.getDate()).padStart(2, '0')
+            const hh = String(d.getHours()).padStart(2, '0')
+            const mi = String(d.getMinutes()).padStart(2, '0')
+            return `${mm}/${dd} ${hh}:${mi}`
+          }
+          const totalSlots = applySlots.length
+          const totalMain = applySlots.filter(s => isMainSlot(s.slot)).length
+          const totalReserve = totalSlots - totalMain
+
+          return (
+            <>
+              <div className="bg-white rounded-2xl shadow px-6 py-4">
+                <div className="flex items-baseline gap-3 flex-wrap">
+                  <span className="text-base font-bold text-gray-800">夏期講習 お申込み一覧</span>
+                  <span className="text-sm text-gray-500">
+                    申込件数：<span className="font-bold text-gray-700">{applyRows.length}</span> 件
+                    （希望コマ計 メイン {totalMain} / 予備 {totalReserve}）
+                  </span>
+                  <div className="ml-auto flex items-center gap-2">
+                    <button
+                      onClick={downloadApplyCsv}
+                      disabled={applyRows.length === 0}
+                      className="px-4 py-2 rounded-lg text-white text-sm font-bold disabled:opacity-50"
+                      style={{ backgroundColor: ORANGE }}
+                    >
+                      CSVダウンロード
+                    </button>
+                    <button
+                      onClick={openBulkDeleteModal}
+                      disabled={applyRows.length === 0 || !csvDownloadedThisSession || bulkDeletingApply}
+                      className="px-4 py-2 rounded-lg text-sm font-bold border-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{ borderColor: '#dc2626', color: '#dc2626', backgroundColor: 'white' }}
+                      title={!csvDownloadedThisSession ? '先にCSVをダウンロードしてください' : '全件削除'}
+                    >
+                      {bulkDeletingApply ? '削除中…' : '全件削除'}
+                    </button>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-400 mt-1">
+                  保護者が申込フォームから送信すると自動で反映されます。
+                  次シーズンの受付前は「CSVダウンロード」で保管 → 「全件削除」で空にしてください。
+                </div>
+                {applyRows.length > 0 && !csvDownloadedThisSession && (
+                  <div className="mt-2 text-xs px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
+                    全件削除するには、先に「CSVダウンロード」を押してデータを保存してください。
+                    （新しい申込が届いた場合は、再度CSVダウンロードが必要です）
+                  </div>
+                )}
+              </div>
+
+              {applyLoading ? (
+                <div className="bg-white rounded-2xl shadow p-12 text-center text-gray-400">読み込み中...</div>
+              ) : applyRows.length === 0 ? (
+                <div className="bg-white rounded-2xl shadow p-12 text-center text-gray-400">
+                  まだお申込みはありません
+                </div>
+              ) : (
+                <div className="bg-white rounded-2xl shadow overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-100 bg-orange-50 text-xs">
+                          <th className="px-3 py-2 text-left font-bold text-gray-600 whitespace-nowrap">申込日時</th>
+                          <th className="px-3 py-2 text-left font-bold text-gray-600 whitespace-nowrap">お子さんの名前</th>
+                          <th className="px-3 py-2 text-left font-bold text-gray-600 whitespace-nowrap">学年</th>
+                          <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">メイン</th>
+                          <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">予備</th>
+                          <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">合計</th>
+                          <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">要望</th>
+                          <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {applyRows.map(r => {
+                          const slots = slotsByApply.get(r.id) ?? []
+                          const mainCount = slots.filter(s => isMainSlot(s.slot)).length
+                          const reserveCount = slots.length - mainCount
+                          const isExpanded = expandedApplyId === r.id
+                          const hasNotes = !!(r.notes && r.notes.trim())
+                          return (
+                            <Fragment key={r.id}>
+                              <tr
+                                onClick={() => setExpandedApplyId(isExpanded ? null : r.id)}
+                                className="cursor-pointer hover:bg-orange-50"
+                                style={{ backgroundColor: isExpanded ? '#FFF7ED' : undefined }}
+                              >
+                                <td className="px-3 py-2.5 text-xs text-gray-600 tabular-nums whitespace-nowrap">
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <span className="text-gray-400 text-xs">{isExpanded ? '▼' : '▶'}</span>
+                                    {fmtDateTime(r.created_at)}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2.5 font-medium text-gray-800 whitespace-nowrap">{r.student_name}</td>
+                                <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{r.grade ?? '-'}</td>
+                                <td className="px-3 py-2.5 text-center font-bold tabular-nums whitespace-nowrap"
+                                  style={{ color: mainCount === 0 ? '#9ca3af' : ORANGE }}
+                                >
+                                  {mainCount}
+                                </td>
+                                <td className="px-3 py-2.5 text-center tabular-nums text-gray-600 whitespace-nowrap">
+                                  {reserveCount}
+                                </td>
+                                <td className="px-3 py-2.5 text-center font-bold tabular-nums text-gray-700 whitespace-nowrap">
+                                  {slots.length}
+                                </td>
+                                <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                                  {hasNotes ? (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: ORANGE, color: 'white' }}>
+                                      あり
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300 text-xs">−</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2.5 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    onClick={() => handleDeleteApply(r.id, r.student_name)}
+                                    disabled={deletingApplyId === r.id}
+                                    className="text-xs text-red-600 hover:text-red-800 disabled:opacity-40 font-bold"
+                                  >
+                                    {deletingApplyId === r.id ? '削除中…' : '削除'}
+                                  </button>
+                                </td>
+                              </tr>
+                              {isExpanded && (() => {
+                                // 申込内の日付一覧を抽出（日付順）
+                                const dateSet = new Set<string>()
+                                slots.forEach(s => dateSet.add(s.date))
+                                const dates = Array.from(dateSet).sort()
+                                const cellSet = new Set(slots.map(s => `${s.date}_${s.slot}`))
+                                const fmtDateShort = (ds: string) => {
+                                  const [, m, d] = ds.split('-').map(Number)
+                                  const dow = new Date(ds + 'T00:00:00').getDay()
+                                  return { label: `${m}/${d}`, dow }
+                                }
+                                return (
+                                  <tr className="bg-orange-50/30">
+                                    <td colSpan={8} className="px-4 py-3">
+                                      {hasNotes && (
+                                        <div className="mb-3 bg-white border border-orange-200 rounded-lg px-3 py-2">
+                                          <div className="text-[11px] font-bold text-gray-500 mb-1">ご要望</div>
+                                          <div className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{r.notes}</div>
+                                        </div>
+                                      )}
+                                      {dates.length === 0 ? (
+                                        <div className="text-xs text-gray-500 px-2 py-1">希望コマの登録がありません</div>
+                                      ) : (
+                                        <div className="overflow-x-auto">
+                                          <div className="text-xs font-bold text-gray-600 mb-2">希望の日・時間帯（メイン={SUMMER_SLOTS.filter(s=>isMainSlot(s.slot)).map(s=>s.label).join('・')}）</div>
+                                          <table className="text-xs">
+                                            <thead>
+                                              <tr>
+                                                <th className="px-2 py-1 text-left font-bold text-gray-500 whitespace-nowrap"></th>
+                                                {dates.map(ds => {
+                                                  const { label, dow } = fmtDateShort(ds)
+                                                  const color = dow === 0 ? '#ef4444' : dow === 6 ? '#3b82f6' : '#6b7280'
+                                                  return (
+                                                    <th key={ds} className="px-1.5 py-1 text-center font-bold whitespace-nowrap tabular-nums" style={{ color }}>
+                                                      <div>{label}</div>
+                                                      <div className="text-[10px] font-normal">({'日月火水木金土'[dow]})</div>
+                                                    </th>
+                                                  )
+                                                })}
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {SUMMER_SLOTS.map(s => {
+                                                const main = isMainSlot(s.slot)
+                                                return (
+                                                  <tr key={s.slot}>
+                                                    <td className="px-2 py-1 font-bold whitespace-nowrap" style={{ color: main ? ORANGE : '#9ca3af' }}>
+                                                      {s.label}　<span className="text-gray-500 font-normal">{s.start}〜{s.end}</span>
+                                                      <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                                        style={main
+                                                          ? { backgroundColor: ORANGE, color: 'white' }
+                                                          : { backgroundColor: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }}
+                                                      >
+                                                        {main ? 'メイン' : '予備'}
+                                                      </span>
+                                                    </td>
+                                                    {dates.map(ds => {
+                                                      const on = cellSet.has(`${ds}_${s.slot}`)
+                                                      return (
+                                                        <td key={ds} className="px-1.5 py-1 text-center">
+                                                          {on ? (
+                                                            <span className="inline-block w-5 h-5 rounded text-white text-xs font-bold leading-5"
+                                                              style={{ backgroundColor: main ? ORANGE : '#9ca3af' }}
+                                                            >✓</span>
+                                                          ) : (
+                                                            <span className="text-gray-300">・</span>
+                                                          )}
+                                                        </td>
+                                                      )
+                                                    })}
+                                                  </tr>
+                                                )
+                                              })}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )
+                              })()}
+                            </Fragment>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
+          )
+        })()}
+
       </div>
+
+      {/* 全件削除 確認モーダル */}
+      {bulkDeleteModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          onClick={() => { if (!bulkDeletingApply) setBulkDeleteModalOpen(false) }}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs font-bold px-2 py-0.5 rounded text-white" style={{ backgroundColor: '#dc2626' }}>
+                注意
+              </span>
+              <h3 className="text-lg font-bold text-gray-800">申込一覧を全件削除</h3>
+            </div>
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 mb-4">
+              <div className="text-sm text-red-800 leading-relaxed">
+                <span className="font-bold">{applyRows.length} 件</span> の申込をすべて削除します。
+              </div>
+              <div className="text-xs text-red-700 mt-1 leading-relaxed">
+                希望コマも含めて完全に削除され、<span className="font-bold">元に戻せません</span>。
+              </div>
+            </div>
+            <div className="text-sm text-gray-700 mb-2 leading-relaxed">
+              本当に削除する場合は、下の欄に <span className="font-bold" style={{ color: '#dc2626' }}>削除します</span> と入力してください。
+            </div>
+            <input
+              type="text"
+              value={bulkDeleteConfirmText}
+              onChange={(e) => setBulkDeleteConfirmText(e.target.value)}
+              placeholder="削除します"
+              autoFocus
+              disabled={bulkDeletingApply}
+              className="w-full px-3 py-2.5 border-2 border-gray-200 rounded-lg text-base focus:outline-none focus:border-red-400 mb-4"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => setBulkDeleteModalOpen(false)}
+                disabled={bulkDeletingApply}
+                className="flex-1 py-2.5 rounded-lg border-2 border-gray-200 text-gray-700 text-sm font-bold disabled:opacity-50"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={executeBulkDeleteApply}
+                disabled={bulkDeleteConfirmText !== '削除します' || bulkDeletingApply}
+                className="flex-1 py-2.5 rounded-lg text-white text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ backgroundColor: '#dc2626' }}
+              >
+                {bulkDeletingApply ? '削除中…' : '全件削除を実行'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -72,6 +72,7 @@ export type SummerAvailability = {
   teacher_id: string
   date: string
   slot: number
+  is_confirmed: boolean
   created_at: string
 }
 
