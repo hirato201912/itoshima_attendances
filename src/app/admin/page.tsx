@@ -14,6 +14,7 @@ type SummerApplyRow = {
   id: string
   student_name: string
   grade: string | null
+  course: string | null
   notes: string | null
   created_at: string
 }
@@ -446,7 +447,7 @@ export default function AdminPage() {
       const [{ data: applies }, { data: slots }] = await Promise.all([
         supabase
           .from('juku_summer_apply')
-          .select('id, student_name, grade, notes, created_at')
+          .select('id, student_name, grade, course, notes, created_at')
           .order('created_at', { ascending: false }),
         supabase
           .from('juku_summer_apply_slots')
@@ -778,7 +779,7 @@ export default function AdminPage() {
 
   // 申込1件分のCSVダウンロード（紙配布用：日付ごとに1行）
   const downloadSingleApplyCsv = (apply: SummerApplyRow) => {
-    const headers = ['お子さんの名前', '学年', '申込日時', '日付', '曜日', 'コマ', '時間帯', 'メイン/予備', '要望']
+    const headers = ['お子さんの名前', '学年', '希望コース', '申込日時', '日付', '曜日', 'コマ', '時間帯', 'メイン/予備', '要望']
     const fmtDateTime = (iso: string) => {
       const d = new Date(iso)
       const y = d.getFullYear()
@@ -797,9 +798,10 @@ export default function AdminPage() {
     const createdAt = fmtDateTime(apply.created_at)
     const notesText = apply.notes ?? ''
 
+    const courseText = apply.course ?? ''
     const body: string[][] = []
     if (slots.length === 0) {
-      body.push([apply.student_name, apply.grade ?? '', createdAt, '', '', '', '', '', notesText])
+      body.push([apply.student_name, apply.grade ?? '', courseText, createdAt, '', '', '', '', '', notesText])
     } else {
       slots.forEach((s, idx) => {
         const [, mm, dd] = s.date.split('-').map(Number)
@@ -809,6 +811,7 @@ export default function AdminPage() {
         body.push([
           idx === 0 ? apply.student_name : '',
           idx === 0 ? (apply.grade ?? '') : '',
+          idx === 0 ? courseText : '',
           idx === 0 ? createdAt : '',
           `${mm}/${dd}`,
           dow,
@@ -836,7 +839,7 @@ export default function AdminPage() {
   // 申込一覧をCSVダウンロード
   const downloadApplyCsv = () => {
     const headers = [
-      '申込日時', 'お子さんの名前', '学年',
+      '申込日時', 'お子さんの名前', '学年', '希望コース',
       'メインコマ数', '予備コマ数', '合計コマ数',
       '希望コマ一覧', '要望',
     ]
@@ -871,6 +874,7 @@ export default function AdminPage() {
         fmtDateTime(r.created_at),
         r.student_name,
         r.grade ?? '',
+        r.course ?? '',
         String(mainCount),
         String(reserveCount),
         String(slots.length),
@@ -1824,6 +1828,7 @@ export default function AdminPage() {
                           <th className="px-3 py-2 text-left font-bold text-gray-600 whitespace-nowrap">申込日時</th>
                           <th className="px-3 py-2 text-left font-bold text-gray-600 whitespace-nowrap">お子さんの名前</th>
                           <th className="px-3 py-2 text-left font-bold text-gray-600 whitespace-nowrap">学年</th>
+                          <th className="px-3 py-2 text-left font-bold text-gray-600 whitespace-nowrap">希望コース</th>
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">メイン</th>
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">予備</th>
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">合計</th>
@@ -1853,6 +1858,15 @@ export default function AdminPage() {
                                 </td>
                                 <td className="px-3 py-2.5 font-medium text-gray-800 whitespace-nowrap">{r.student_name}</td>
                                 <td className="px-3 py-2.5 text-gray-700 whitespace-nowrap">{r.grade ?? '-'}</td>
+                                <td className="px-3 py-2.5 whitespace-nowrap">
+                                  {r.course ? (
+                                    <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ backgroundColor: '#FFF7ED', color: ORANGE, border: `1px solid ${ORANGE}` }}>
+                                      {r.course}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300 text-xs">−</span>
+                                  )}
+                                </td>
                                 <td className="px-3 py-2.5 text-center font-bold tabular-nums whitespace-nowrap"
                                   style={{ color: mainCount === 0 ? '#9ca3af' : ORANGE }}
                                 >
@@ -1905,7 +1919,7 @@ export default function AdminPage() {
                                 }
                                 return (
                                   <tr className="bg-orange-50/30">
-                                    <td colSpan={8} className="px-4 py-3">
+                                    <td colSpan={9} className="px-4 py-3">
                                       {hasNotes && (
                                         <div className="mb-3 bg-white border border-orange-200 rounded-lg px-3 py-2">
                                           <div className="text-[11px] font-bold text-gray-500 mb-1">ご要望</div>

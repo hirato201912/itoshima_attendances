@@ -94,6 +94,22 @@ const PRICE_TABLE: ReadonlyArray<{
   ]},
 ]
 
+// 学年→申込可能なコース（受講回数）一覧。中3のみ充実コース(12回)あり
+const COURSE_OPTIONS_BY_GRADE: Record<string, ReadonlyArray<{ sessions: number; amount: number }>> = {}
+for (const g of PRICE_TABLE) {
+  // PRICE_TABLEのgrade表記は「小学生/中1/中2/中3/高1/高2/高3」
+  // 申込フォームの学年（小1〜小6/中1〜中3/高1〜高3）に対応するキーへマッピング
+  if (g.grade === '小学生') {
+    for (const k of ['小1', '小2', '小3', '小4', '小5', '小6']) {
+      COURSE_OPTIONS_BY_GRADE[k] = g.items
+    }
+  } else {
+    COURSE_OPTIONS_BY_GRADE[g.grade] = g.items
+  }
+}
+
+const COURSE_CONSULT = '相談して決めたい'
+
 type GroupedSlot = { date: string; dow: number; slots: number[] }
 
 function groupSelectedByDate(selected: Set<string>): GroupedSlot[] {
@@ -117,6 +133,7 @@ function groupSelectedByDate(selected: Set<string>): GroupedSlot[] {
 export default function SummerApplyPage() {
   const [studentName, setStudentName] = useState('')
   const [grade, setGrade] = useState<ApplyGrade | ''>('')
+  const [course, setCourse] = useState<string>('') // '必修' | '標準' | '充実' | '相談して決めたい' | ''
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [notes, setNotes] = useState('')
   const [confirming, setConfirming] = useState(false)
@@ -186,6 +203,7 @@ export default function SummerApplyPage() {
       .insert({
         student_name: name,
         grade,
+        course: course || null,
         notes: notes.trim() || null,
       })
       .select('id')
@@ -218,6 +236,7 @@ export default function SummerApplyPage() {
   const handleReset = () => {
     setStudentName('')
     setGrade('')
+    setCourse('')
     setSelected(new Set())
     setNotes('')
     setError(null)
@@ -266,7 +285,7 @@ export default function SummerApplyPage() {
             </p>
           </div>
 
-          {/* お名前・学年 */}
+          {/* お名前・学年・コース */}
           <section className="bg-white rounded-2xl shadow-sm divide-y divide-gray-100">
             <div className="px-4 py-3">
               <div className="text-xs text-gray-500 mb-1">お子さんのお名前</div>
@@ -275,6 +294,14 @@ export default function SummerApplyPage() {
             <div className="px-4 py-3">
               <div className="text-xs text-gray-500 mb-1">学年</div>
               <div className="text-base font-bold text-gray-800">{grade}</div>
+            </div>
+            <div className="px-4 py-3">
+              <div className="text-xs text-gray-500 mb-1">希望コース</div>
+              {course ? (
+                <div className="text-base font-bold" style={{ color: ORANGE }}>{course}{course !== COURSE_CONSULT ? 'コース' : ''}</div>
+              ) : (
+                <div className="text-sm text-gray-400">（未選択：塾からご提案します）</div>
+              )}
             </div>
           </section>
 
@@ -600,7 +627,11 @@ export default function SummerApplyPage() {
                 <button
                   key={g}
                   type="button"
-                  onClick={() => setGrade(g)}
+                  onClick={() => {
+                    setGrade(g)
+                    // 学年が変わったらコース選択はリセット（料金体系が変わるため）
+                    setCourse('')
+                  }}
                   className="py-2.5 rounded-lg border-2 text-sm font-bold transition-colors active:scale-95"
                   style={
                     on
@@ -613,6 +644,73 @@ export default function SummerApplyPage() {
               )
             })}
           </div>
+        </section>
+
+        {/* 2.5 希望コース */}
+        <section className="bg-white rounded-2xl shadow-sm px-4 py-4">
+          <label className="block text-sm font-bold text-gray-800 mb-2">
+            希望コース
+            <span className="ml-2 text-xs font-normal text-gray-400">任意</span>
+          </label>
+          {!grade ? (
+            <p className="text-xs text-gray-500">
+              先に学年をお選びください。
+            </p>
+          ) : (
+            <>
+              <p className="text-xs text-gray-600 mb-3 leading-relaxed">
+                ご希望のコースをお選びください。お決まりでない場合は「{COURSE_CONSULT}」を選んでいただければ、塾からご提案します。
+              </p>
+              <div className="grid grid-cols-1 gap-2">
+                {(COURSE_OPTIONS_BY_GRADE[grade] ?? []).map(opt => {
+                  const name = COURSE_NAMES[opt.sessions]
+                  const on = course === name
+                  return (
+                    <button
+                      key={opt.sessions}
+                      type="button"
+                      onClick={() => setCourse(name)}
+                      className="flex items-center justify-between px-4 py-3 rounded-xl border-2 text-sm font-bold transition-colors active:scale-[0.98]"
+                      style={
+                        on
+                          ? { backgroundColor: '#FFF7ED', borderColor: ORANGE, color: ORANGE }
+                          : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#4b5563' }
+                      }
+                    >
+                      <span className="flex items-baseline gap-2">
+                        <span>{name}コース</span>
+                        <span className="text-[11px] font-normal text-gray-500">{opt.sessions}回</span>
+                      </span>
+                      <span className="tabular-nums" style={{ color: on ? ORANGE : '#374151' }}>
+                        {opt.amount.toLocaleString()}円
+                      </span>
+                    </button>
+                  )
+                })}
+                <button
+                  type="button"
+                  onClick={() => setCourse(COURSE_CONSULT)}
+                  className="px-4 py-3 rounded-xl border-2 text-sm font-bold transition-colors active:scale-[0.98]"
+                  style={
+                    course === COURSE_CONSULT
+                      ? { backgroundColor: '#FFF7ED', borderColor: ORANGE, color: ORANGE }
+                      : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#4b5563' }
+                  }
+                >
+                  {COURSE_CONSULT}
+                </button>
+              </div>
+              {course && (
+                <button
+                  type="button"
+                  onClick={() => setCourse('')}
+                  className="mt-2 text-[11px] text-gray-500 underline underline-offset-2"
+                >
+                  コース選択をクリア
+                </button>
+              )}
+            </>
+          )}
         </section>
 
         {/* 3. 希望コマ */}

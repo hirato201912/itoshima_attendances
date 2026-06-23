@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS juku_summer_apply (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   student_name text NOT NULL,
   grade text,
+  course text,
   notes text,
   created_at timestamp with time zone DEFAULT now()
 );

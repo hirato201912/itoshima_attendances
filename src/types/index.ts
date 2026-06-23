@@ -89,6 +89,7 @@ export type SummerApply = {
   id: string
   student_name: string
   grade: string | null
+  course: string | null
   notes: string | null
   created_at: string
 }
