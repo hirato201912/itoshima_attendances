@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
-import { SUMMER_SLOTS, SUMMER_PERIOD, APPLY_GRADES } from '@/types'
+import { SUMMER_SLOTS, SUMMER_APPLY_PERIOD, APPLY_GRADES } from '@/types'
 import type { ApplyGrade } from '@/types'
 
 const ORANGE = '#FF7F00'
@@ -12,13 +12,13 @@ type Row =
   | { type: 'closed'; label: string; rangeLabel: string }
 
 function findClosedRange(dateStr: string) {
-  return SUMMER_PERIOD.closedRanges.find(r => dateStr >= r.start && dateStr <= r.end)
+  return SUMMER_APPLY_PERIOD.closedRanges.find(r => dateStr >= r.start && dateStr <= r.end)
 }
 
 function buildRows(): Row[] {
   const rows: Row[] = []
-  const start = new Date(SUMMER_PERIOD.start + 'T00:00:00')
-  const end = new Date(SUMMER_PERIOD.end + 'T00:00:00')
+  const start = new Date(SUMMER_APPLY_PERIOD.start + 'T00:00:00')
+  const end = new Date(SUMMER_APPLY_PERIOD.end + 'T00:00:00')
   const insertedRanges = new Set<string>()
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const dow = d.getDay()

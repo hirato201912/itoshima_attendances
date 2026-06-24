@@ -202,7 +202,12 @@ export default function AttendancePage() {
                   出られる日・時間帯を提出してください
                 </p>
                 <p className="text-xs text-white/85 mt-1">
-                  7/21（火）〜 8/28（金）の希望を入力 ›
+                  {(() => {
+                    const s = new Date(SUMMER_PERIOD.start + 'T00:00:00')
+                    const e = new Date(SUMMER_PERIOD.end + 'T00:00:00')
+                    const dow = '日月火水木金土'
+                    return `${s.getMonth() + 1}/${s.getDate()}（${dow[s.getDay()]}）〜 ${e.getMonth() + 1}/${e.getDate()}（${dow[e.getDay()]}）の希望を入力 ›`
+                  })()}
                 </p>
               </div>
               <div className="shrink-0 text-2xl font-bold">›</div>

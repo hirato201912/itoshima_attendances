@@ -57,12 +57,23 @@ export const SUMMER_SLOTS = [
   { slot: 5, label: '⑤', start: '19:55', end: '21:30' },
 ] as const
 
-// 夏期講習：期間定義（複数の休校期間に対応）
+// 夏期講習：期間定義（講師シフト＆管理画面用）
+// 7月分は夏期講習に収まりきれなかった分の通常授業調整等で活用するため、提出・閲覧対象に含める
 export const SUMMER_PERIOD = {
   start: '2026-07-21',
   end: '2026-08-28',
   closedRanges: [
     { start: '2026-07-29', end: '2026-07-31', label: '休校日' },
+    { start: '2026-08-08', end: '2026-08-16', label: 'お盆休み' },
+  ],
+} as const
+
+// 保護者向け申込フォーム用の期間（夏期講習の実施期間）
+// 講師シフトの期間とは別管理：保護者からは8月分のみを対象に申込を受け付ける
+export const SUMMER_APPLY_PERIOD = {
+  start: '2026-08-03',
+  end: '2026-08-28',
+  closedRanges: [
     { start: '2026-08-08', end: '2026-08-16', label: 'お盆休み' },
   ],
 } as const
