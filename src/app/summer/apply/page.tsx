@@ -110,6 +110,9 @@ for (const g of PRICE_TABLE) {
 
 const COURSE_CONSULT = '相談して決めたい'
 
+// 今夏は中3の充実(12回)コースは申込フォームから直接受け付けず、希望者には個別相談に誘導する
+const isCourseConsultOnly = (g: string, sessions: number) => g === '中3' && sessions === 12
+
 type GroupedSlot = { date: string; dow: number; slots: number[] }
 
 function groupSelectedByDate(selected: Set<string>): GroupedSlot[] {
@@ -578,16 +581,19 @@ export default function SummerApplyPage() {
                   {g.grade}
                 </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-1.5 pl-1">
-                  {g.items.map(it => (
-                    <div key={it.sessions} className="flex flex-col tabular-nums">
-                      <span className="text-[10px] text-gray-500 leading-tight">
-                        {COURSE_NAMES[it.sessions]}（{it.sessions}回）
-                      </span>
-                      <span className="text-sm font-bold leading-tight" style={{ color: ORANGE }}>
-                        {it.amount.toLocaleString()}円
-                      </span>
-                    </div>
-                  ))}
+                  {g.items.map(it => {
+                    const consultOnly = isCourseConsultOnly(g.grade, it.sessions)
+                    return (
+                      <div key={it.sessions} className="flex flex-col tabular-nums">
+                        <span className="text-[10px] leading-tight" style={{ color: consultOnly ? '#cbd5e1' : '#6b7280' }}>
+                          {COURSE_NAMES[it.sessions]}（{it.sessions}回）
+                        </span>
+                        <span className="text-sm font-bold leading-tight" style={{ color: consultOnly ? '#cbd5e1' : ORANGE }}>
+                          {it.amount.toLocaleString()}円
+                        </span>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             ))}
@@ -665,23 +671,31 @@ export default function SummerApplyPage() {
                 {(COURSE_OPTIONS_BY_GRADE[grade] ?? []).map(opt => {
                   const name = COURSE_NAMES[opt.sessions]
                   const on = course === name
+                  const consultOnly = isCourseConsultOnly(grade, opt.sessions)
                   return (
                     <button
                       key={opt.sessions}
                       type="button"
-                      onClick={() => setCourse(name)}
-                      className="flex items-center justify-between px-4 py-3 rounded-xl border-2 text-sm font-bold transition-colors active:scale-[0.98]"
+                      onClick={() => { if (!consultOnly) setCourse(name) }}
+                      disabled={consultOnly}
+                      aria-disabled={consultOnly}
+                      className="flex items-center justify-between px-4 py-3 rounded-xl border-2 text-sm font-bold transition-colors active:scale-[0.98] disabled:active:scale-100 disabled:cursor-default"
                       style={
-                        on
+                        consultOnly
+                          ? { backgroundColor: '#f9fafb', borderColor: '#e5e7eb', color: '#cbd5e1' }
+                          : on
                           ? { backgroundColor: '#FFF7ED', borderColor: ORANGE, color: ORANGE }
                           : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#4b5563' }
                       }
                     >
                       <span className="flex items-baseline gap-2">
                         <span>{name}コース</span>
-                        <span className="text-[11px] font-normal text-gray-500">{opt.sessions}回</span>
+                        <span className="text-[11px] font-normal" style={{ color: consultOnly ? '#cbd5e1' : '#6b7280' }}>{opt.sessions}回</span>
+                        {consultOnly && (
+                          <span className="text-[10px] font-normal" style={{ color: '#cbd5e1' }}>（要相談）</span>
+                        )}
                       </span>
-                      <span className="tabular-nums" style={{ color: on ? ORANGE : '#374151' }}>
+                      <span className="tabular-nums" style={{ color: consultOnly ? '#cbd5e1' : on ? ORANGE : '#374151' }}>
                         {opt.amount.toLocaleString()}円
                       </span>
                     </button>
