@@ -22,6 +22,7 @@ type SummerApplySlotRow = {
   apply_id: string
   date: string
   slot: number
+  is_confirmed: boolean
 }
 
 const ORANGE = '#FF7F00'
@@ -326,6 +327,7 @@ export default function AdminPage() {
   const [applyLoading, setApplyLoading] = useState(false)
   const [expandedApplyId, setExpandedApplyId] = useState<string | null>(null)
   const [deletingApplyId, setDeletingApplyId] = useState<string | null>(null)
+  const [togglingApplyConfirmKey, setTogglingApplyConfirmKey] = useState<string | null>(null)
   const [bulkDeletingApply, setBulkDeletingApply] = useState(false)
   // 全件削除のブロック用：CSVを今セッションでダウンロードしたか、確認モーダル開閉、入力テキスト一致
   const [csvDownloadedThisSession, setCsvDownloadedThisSession] = useState(false)
@@ -451,7 +453,7 @@ export default function AdminPage() {
           .order('created_at', { ascending: false }),
         supabase
           .from('juku_summer_apply_slots')
-          .select('apply_id, date, slot'),
+          .select('apply_id, date, slot, is_confirmed'),
       ])
       setApplyRows((applies ?? []) as SummerApplyRow[])
       setApplySlots((slots ?? []) as SummerApplySlotRow[])
@@ -702,6 +704,26 @@ export default function AdminPage() {
     setTogglingConfirmKey(null)
   }
 
+  // 保護者申込：1コマの確定状態をトグル
+  const toggleApplyConfirm = async (applyId: string, date: string, slot: number, current: boolean) => {
+    const key = `${applyId}_${date}_${slot}`
+    if (togglingApplyConfirmKey) return
+    setTogglingApplyConfirmKey(key)
+    // 楽観的更新
+    setApplySlots(prev => prev.map(s =>
+      s.apply_id === applyId && s.date === date && s.slot === slot
+        ? { ...s, is_confirmed: !current }
+        : s
+    ))
+    await supabase
+      .from('juku_summer_apply_slots')
+      .update({ is_confirmed: !current })
+      .eq('apply_id', applyId)
+      .eq('date', date)
+      .eq('slot', slot)
+    setTogglingApplyConfirmKey(null)
+  }
+
   // 全件削除モーダルを開く（CSVダウンロード済みのときだけ押せる）
   const openBulkDeleteModal = () => {
     if (applyRows.length === 0 || !csvDownloadedThisSession) return
@@ -779,7 +801,7 @@ export default function AdminPage() {
 
   // 申込1件分のCSVダウンロード（紙配布用：日付ごとに1行）
   const downloadSingleApplyCsv = (apply: SummerApplyRow) => {
-    const headers = ['お子さんの名前', '学年', '希望コース', '申込日時', '日付', '曜日', 'コマ', '時間帯', 'メイン/予備', '要望']
+    const headers = ['お子さんの名前', '学年', '希望コース', '申込日時', '日付', '曜日', 'コマ', '時間帯', 'メイン/予備', '状態', '要望']
     const fmtDateTime = (iso: string) => {
       const d = new Date(iso)
       const y = d.getFullYear()
@@ -801,7 +823,7 @@ export default function AdminPage() {
     const courseText = apply.course ?? ''
     const body: string[][] = []
     if (slots.length === 0) {
-      body.push([apply.student_name, apply.grade ?? '', courseText, createdAt, '', '', '', '', '', notesText])
+      body.push([apply.student_name, apply.grade ?? '', courseText, createdAt, '', '', '', '', '', '', notesText])
     } else {
       slots.forEach((s, idx) => {
         const [, mm, dd] = s.date.split('-').map(Number)
@@ -818,6 +840,7 @@ export default function AdminPage() {
           info.label,
           `${info.start}〜${info.end}`,
           tag,
+          s.is_confirmed ? '確定' : '希望',
           idx === 0 ? notesText : '',
         ])
       })
@@ -840,7 +863,7 @@ export default function AdminPage() {
   const downloadApplyCsv = () => {
     const headers = [
       '申込日時', 'お子さんの名前', '学年', '希望コース',
-      'メインコマ数', '予備コマ数', '合計コマ数',
+      'メインコマ数', '予備コマ数', '合計コマ数', '確定コマ数',
       '希望コマ一覧', '要望',
     ]
     const slotsByApply = new Map<string, SummerApplySlotRow[]>()
@@ -865,10 +888,12 @@ export default function AdminPage() {
       )
       const mainCount = slots.filter(s => isMainSlot(s.slot)).length
       const reserveCount = slots.length - mainCount
+      const confirmedCount = slots.filter(s => s.is_confirmed).length
       const slotsLabel = slots.map(s => {
         const [, mm, dd] = s.date.split('-').map(Number)
         const tag = isMainSlot(s.slot) ? 'メイン' : '予備'
-        return `${mm}/${dd} ${slotLabelOf(s.slot)}(${tag})`
+        const mark = s.is_confirmed ? '★' : ''
+        return `${mark}${mm}/${dd} ${slotLabelOf(s.slot)}(${tag})`
       }).join(' / ')
       return [
         fmtDateTime(r.created_at),
@@ -878,6 +903,7 @@ export default function AdminPage() {
         String(mainCount),
         String(reserveCount),
         String(slots.length),
+        String(confirmedCount),
         slotsLabel,
         r.notes ?? '',
       ]
@@ -1832,6 +1858,7 @@ export default function AdminPage() {
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">メイン</th>
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">予備</th>
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">合計</th>
+                          <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">確定</th>
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">要望</th>
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">操作</th>
                         </tr>
@@ -1841,6 +1868,7 @@ export default function AdminPage() {
                           const slots = slotsByApply.get(r.id) ?? []
                           const mainCount = slots.filter(s => isMainSlot(s.slot)).length
                           const reserveCount = slots.length - mainCount
+                          const confirmedCount = slots.filter(s => s.is_confirmed).length
                           const isExpanded = expandedApplyId === r.id
                           const hasNotes = !!(r.notes && r.notes.trim())
                           return (
@@ -1879,6 +1907,23 @@ export default function AdminPage() {
                                   {slots.length}
                                 </td>
                                 <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                                  {slots.length === 0 ? (
+                                    <span className="text-gray-300 text-xs">−</span>
+                                  ) : confirmedCount === 0 ? (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border" style={{ borderColor: '#d1d5db', color: '#6b7280', backgroundColor: 'white' }}>
+                                      未
+                                    </span>
+                                  ) : confirmedCount === slots.length ? (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded text-white" style={{ backgroundColor: '#16A34A' }}>
+                                      完了 {confirmedCount}/{slots.length}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>
+                                      {confirmedCount}/{slots.length}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2.5 text-center whitespace-nowrap">
                                   {hasNotes ? (
                                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: ORANGE, color: 'white' }}>
                                       あり
@@ -1911,7 +1956,6 @@ export default function AdminPage() {
                                 const dateSet = new Set<string>()
                                 slots.forEach(s => dateSet.add(s.date))
                                 const dates = Array.from(dateSet).sort()
-                                const cellSet = new Set(slots.map(s => `${s.date}_${s.slot}`))
                                 const fmtDateShort = (ds: string) => {
                                   const [, m, d] = ds.split('-').map(Number)
                                   const dow = new Date(ds + 'T00:00:00').getDay()
@@ -1919,7 +1963,7 @@ export default function AdminPage() {
                                 }
                                 return (
                                   <tr className="bg-orange-50/30">
-                                    <td colSpan={9} className="px-4 py-3">
+                                    <td colSpan={10} className="px-4 py-3">
                                       {hasNotes && (
                                         <div className="mb-3 bg-white border border-orange-200 rounded-lg px-3 py-2">
                                           <div className="text-[11px] font-bold text-gray-500 mb-1">ご要望</div>
@@ -1930,7 +1974,10 @@ export default function AdminPage() {
                                         <div className="text-xs text-gray-500 px-2 py-1">希望コマの登録がありません</div>
                                       ) : (
                                         <div className="overflow-x-auto">
-                                          <div className="text-xs font-bold text-gray-600 mb-2">希望の日・時間帯（メイン={SUMMER_SLOTS.filter(s=>isMainSlot(s.slot)).map(s=>s.label).join('・')}）</div>
+                                          <div className="text-xs font-bold text-gray-600 mb-2">
+                                            希望の日・時間帯（メイン={SUMMER_SLOTS.filter(s=>isMainSlot(s.slot)).map(s=>s.label).join('・')}）
+                                            <span className="ml-2 font-normal text-gray-500">― ✓をクリックすると緑の「確定」に切替（もう一度押すと希望に戻る）</span>
+                                          </div>
                                           <table className="text-xs">
                                             <thead>
                                               <tr>
@@ -1963,13 +2010,24 @@ export default function AdminPage() {
                                                       </span>
                                                     </td>
                                                     {dates.map(ds => {
-                                                      const on = cellSet.has(`${ds}_${s.slot}`)
+                                                      const key = `${ds}_${s.slot}`
+                                                      const slotRow = slots.find(sl => sl.date === ds && sl.slot === s.slot)
+                                                      const on = !!slotRow
+                                                      const conf = !!slotRow?.is_confirmed
+                                                      const toggleKey = `${r.id}_${ds}_${s.slot}`
+                                                      const isToggling = togglingApplyConfirmKey === toggleKey
                                                       return (
-                                                        <td key={ds} className="px-1.5 py-1 text-center">
+                                                        <td key={key} className="px-1.5 py-1 text-center">
                                                           {on ? (
-                                                            <span className="inline-block w-5 h-5 rounded text-white text-xs font-bold leading-5"
-                                                              style={{ backgroundColor: main ? ORANGE : '#9ca3af' }}
-                                                            >✓</span>
+                                                            <button
+                                                              onClick={() => toggleApplyConfirm(r.id, ds, s.slot, conf)}
+                                                              disabled={isToggling}
+                                                              className="inline-flex items-center justify-center w-6 h-6 rounded text-white text-[10px] font-bold leading-none disabled:opacity-50 hover:opacity-90 active:scale-95 transition-transform"
+                                                              style={{ backgroundColor: conf ? '#16A34A' : (main ? ORANGE : '#9ca3af') }}
+                                                              title={conf ? 'クリックで「希望」に戻す' : 'クリックで「確定」にする'}
+                                                            >
+                                                              {conf ? '確定' : '✓'}
+                                                            </button>
                                                           ) : (
                                                             <span className="text-gray-300">・</span>
                                                           )}
