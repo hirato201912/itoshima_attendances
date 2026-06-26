@@ -506,6 +506,30 @@ export default function SummerApplyPage() {
       </header>
 
       <main className="max-w-lg mx-auto px-4 py-5 space-y-4">
+        {/* 申込制であることの注意バナー */}
+        <section
+          className="rounded-2xl shadow-sm px-4 py-4 border-2"
+          style={{ backgroundColor: '#FEF2F2', borderColor: '#DC2626' }}
+        >
+          <div className="flex items-start gap-2">
+            <span
+              className="text-[10px] font-bold px-2 py-0.5 rounded shrink-0 mt-1"
+              style={{ backgroundColor: '#DC2626', color: 'white' }}
+            >
+              ご注意
+            </span>
+            <div className="flex-1">
+              <h2 className="text-base font-bold mb-1.5" style={{ color: '#991B1B' }}>
+                夏期講習は申込制です
+              </h2>
+              <p className="text-sm text-gray-800 leading-relaxed">
+                このフォームから<span className="font-bold">お申込みいただいた方のみ受講</span>できます。
+                お申込みがない場合は通常授業のみとなりますので、受講ご希望の方は必ずこのフォームよりお申込みください。
+              </p>
+            </div>
+          </div>
+        </section>
+
         {/* 夏期講習について（最初に必ず読んでほしい案内） */}
         <section
           className="rounded-2xl shadow-sm px-4 py-4 border-2"
