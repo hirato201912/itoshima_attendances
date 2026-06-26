@@ -83,7 +83,8 @@ export type SummerAvailability = {
   teacher_id: string
   date: string
   slot: number
-  is_confirmed: boolean
+  // 確定状況：0=希望のみ / 1=1人入った / 2=2人入った（満員）
+  confirmed_count: number
   created_at: string
 }
 

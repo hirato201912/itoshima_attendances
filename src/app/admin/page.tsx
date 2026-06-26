@@ -316,7 +316,7 @@ export default function AdminPage() {
 
   // 夏期講習タブ
   const [summerTeachers, setSummerTeachers] = useState<{ id: string; name: string; code: number }[]>([])
-  const [summerRows, setSummerRows] = useState<{ teacher_id: string; date: string; slot: number; is_confirmed: boolean }[]>([])
+  const [summerRows, setSummerRows] = useState<{ teacher_id: string; date: string; slot: number; confirmed_count: number }[]>([])
   const [summerLoading, setSummerLoading] = useState(false)
   const [expandedSummerTeacher, setExpandedSummerTeacher] = useState<string | null>(null)
   const [togglingConfirmKey, setTogglingConfirmKey] = useState<string | null>(null)
@@ -417,12 +417,12 @@ export default function AdminPage() {
           .order('code'),
         supabase
           .from('juku_summer_availability')
-          .select('teacher_id, date, slot, is_confirmed')
+          .select('teacher_id, date, slot, confirmed_count')
           .gte('date', SUMMER_PERIOD.start)
           .lte('date', SUMMER_PERIOD.end),
       ])
       setSummerTeachers(teachers ?? [])
-      setSummerRows((rows ?? []) as { teacher_id: string; date: string; slot: number; is_confirmed: boolean }[])
+      setSummerRows((rows ?? []) as { teacher_id: string; date: string; slot: number; confirmed_count: number }[])
       setSummerLoading(false)
     }
 
@@ -684,20 +684,21 @@ export default function AdminPage() {
     URL.revokeObjectURL(url)
   }
 
-  // 夏期講習：講師×日付×コマの確定状態をトグル
-  const toggleSummerConfirm = async (teacherId: string, date: string, slot: number, current: boolean) => {
+  // 夏期講習：講師×日付×コマの確定状況を 希望(0) → 1人(1) → 2人(2) → 希望(0) でサイクル
+  const cycleSummerConfirm = async (teacherId: string, date: string, slot: number, current: number) => {
     const key = `${teacherId}_${date}_${slot}`
     if (togglingConfirmKey) return
     setTogglingConfirmKey(key)
+    const next = (current + 1) % 3
     // 楽観的更新
     setSummerRows(prev => prev.map(r =>
       r.teacher_id === teacherId && r.date === date && r.slot === slot
-        ? { ...r, is_confirmed: !current }
+        ? { ...r, confirmed_count: next }
         : r
     ))
     await supabase
       .from('juku_summer_availability')
-      .update({ is_confirmed: !current })
+      .update({ confirmed_count: next })
       .eq('teacher_id', teacherId)
       .eq('date', date)
       .eq('slot', slot)
@@ -781,7 +782,7 @@ export default function AdminPage() {
           dow,
           info.label,
           `${info.start}〜${info.end}`,
-          r.is_confirmed ? '確定' : '希望',
+          r.confirmed_count === 2 ? '2人' : r.confirmed_count === 1 ? '1人' : '希望',
         ])
       })
     }
@@ -1580,11 +1581,22 @@ export default function AdminPage() {
 
           // 講師×日付×スロットの詳細マップ
           const cellSet = new Set(summerRows.map(r => `${r.teacher_id}_${r.date}_${r.slot}`))
-          const confirmedSet = new Set(summerRows.filter(r => r.is_confirmed).map(r => `${r.teacher_id}_${r.date}_${r.slot}`))
-          // 講師ごとの確定セル数
-          const confirmedByTeacher = new Map<string, number>()
+          // 確定状況：0=希望のみ / 1=1人 / 2=2人
+          const confirmedCountMap = new Map<string, number>()
           for (const r of summerRows) {
-            if (r.is_confirmed) confirmedByTeacher.set(r.teacher_id, (confirmedByTeacher.get(r.teacher_id) ?? 0) + 1)
+            if (r.confirmed_count > 0) {
+              confirmedCountMap.set(`${r.teacher_id}_${r.date}_${r.slot}`, r.confirmed_count)
+            }
+          }
+          // 講師ごとの確定セル数（1人・2人の内訳）
+          const confirmedByTeacher = new Map<string, { ones: number; twos: number }>()
+          for (const r of summerRows) {
+            if (r.confirmed_count > 0) {
+              const cur = confirmedByTeacher.get(r.teacher_id) ?? { ones: 0, twos: 0 }
+              if (r.confirmed_count === 2) cur.twos += 1
+              else cur.ones += 1
+              confirmedByTeacher.set(r.teacher_id, cur)
+            }
           }
 
           const formatDateShort = (ds: string) => {
@@ -1672,11 +1684,21 @@ export default function AdminPage() {
                                   style={{ color: total === 0 ? '#9ca3af' : '#374151' }}
                                 >
                                   {total}<span className="text-gray-400 font-normal">/{totalPossible}</span>
-                                  {(confirmedByTeacher.get(t.id) ?? 0) > 0 && (
-                                    <div className="text-[10px] font-bold mt-0.5" style={{ color: '#16A34A' }}>
-                                      確定 {confirmedByTeacher.get(t.id)}
-                                    </div>
-                                  )}
+                                  {(() => {
+                                    const c = confirmedByTeacher.get(t.id)
+                                    if (!c || (c.ones === 0 && c.twos === 0)) return null
+                                    return (
+                                      <div className="text-[10px] font-bold mt-0.5 leading-tight">
+                                        {c.ones > 0 && (
+                                          <span style={{ color: '#16A34A' }}>1人 {c.ones}</span>
+                                        )}
+                                        {c.ones > 0 && c.twos > 0 && <span className="text-gray-400"> / </span>}
+                                        {c.twos > 0 && (
+                                          <span style={{ color: '#1E3A8A' }}>2人 {c.twos}</span>
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
                                 </td>
                                 {dates.map(ds => {
                                   const c = countMap.get(`${t.id}_${ds}`) ?? 0
@@ -1731,19 +1753,22 @@ export default function AdminPage() {
                                               {dates.map(ds => {
                                                 const key = `${t.id}_${ds}_${s.slot}`
                                                 const on = cellSet.has(key)
-                                                const conf = confirmedSet.has(key)
+                                                const count = confirmedCountMap.get(key) ?? 0
                                                 const isToggling = togglingConfirmKey === key
+                                                const bg = count === 2 ? '#1E3A8A' : count === 1 ? '#16A34A' : ORANGE
+                                                const label = count === 2 ? '2人' : count === 1 ? '1人' : '✓'
+                                                const nextLabel = count === 2 ? '希望' : count === 1 ? '2人' : '1人'
                                                 return (
                                                   <td key={ds} className="px-1.5 py-1 text-center">
                                                     {on ? (
                                                       <button
-                                                        onClick={() => toggleSummerConfirm(t.id, ds, s.slot, conf)}
+                                                        onClick={() => cycleSummerConfirm(t.id, ds, s.slot, count)}
                                                         disabled={isToggling}
-                                                        className="inline-flex items-center justify-center w-6 h-6 rounded text-white text-[10px] font-bold leading-none disabled:opacity-50 hover:opacity-90 active:scale-95 transition-transform"
-                                                        style={{ backgroundColor: conf ? '#16A34A' : ORANGE }}
-                                                        title={conf ? 'クリックで「希望」に戻す' : 'クリックで「確定」にする'}
+                                                        className="inline-flex items-center justify-center w-7 h-6 rounded text-white text-[10px] font-bold leading-none disabled:opacity-50 hover:opacity-90 active:scale-95 transition-transform"
+                                                        style={{ backgroundColor: bg }}
+                                                        title={`クリックで「${nextLabel}」に切替`}
                                                       >
-                                                        {conf ? '確定' : '✓'}
+                                                        {label}
                                                       </button>
                                                     ) : (
                                                       <span className="text-gray-300">・</span>
@@ -1765,12 +1790,20 @@ export default function AdminPage() {
                       </tbody>
                     </table>
                   </div>
-                  <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50 flex items-center gap-3 text-[11px] text-gray-500">
-                    <span className="font-bold">色：</span>
-                    <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#DCFCE7' }} />4〜5コマ</span>
-                    <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#FEF3C7' }} />2〜3コマ</span>
-                    <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#FEE2E2' }} />1コマ</span>
-                    <span className="inline-flex items-center gap-1"><span className="text-gray-400">−</span>未提出</span>
+                  <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50 flex items-center gap-x-4 gap-y-1 flex-wrap text-[11px] text-gray-500">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="font-bold">提出数：</span>
+                      <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#DCFCE7' }} />4〜5コマ</span>
+                      <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#FEF3C7' }} />2〜3コマ</span>
+                      <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#FEE2E2' }} />1コマ</span>
+                      <span className="inline-flex items-center gap-1"><span className="text-gray-400">−</span>未提出</span>
+                    </span>
+                    <span className="inline-flex items-center gap-2">
+                      <span className="font-bold">確定：</span>
+                      <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-4 rounded text-white text-[9px] font-bold leading-none flex items-center justify-center" style={{ backgroundColor: ORANGE }}>✓</span>希望</span>
+                      <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-4 rounded text-white text-[9px] font-bold leading-none flex items-center justify-center" style={{ backgroundColor: '#16A34A' }}>1</span>1人</span>
+                      <span className="inline-flex items-center gap-1"><span className="inline-block w-4 h-4 rounded text-white text-[9px] font-bold leading-none flex items-center justify-center" style={{ backgroundColor: '#1E3A8A' }}>2</span>2人（満員）</span>
+                    </span>
                   </div>
                 </div>
               )}

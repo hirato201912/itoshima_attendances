@@ -74,16 +74,17 @@ export default function SummerPage() {
     setLoading(true)
     const { data } = await supabase
       .from('juku_summer_availability')
-      .select('date, slot, is_confirmed')
+      .select('date, slot, confirmed_count')
       .eq('teacher_id', teacherId)
       .gte('date', SUMMER_PERIOD.start)
       .lte('date', SUMMER_PERIOD.end)
     const sel = new Set<string>()
     const conf = new Set<string>()
-    for (const r of (data ?? []) as { date: string; slot: number; is_confirmed: boolean }[]) {
+    for (const r of (data ?? []) as { date: string; slot: number; confirmed_count: number }[]) {
       const key = `${r.date}_${r.slot}`
       sel.add(key)
-      if (r.is_confirmed) conf.add(key)
+      // 1人でも入っていれば講師には「確定」として見せる
+      if (r.confirmed_count > 0) conf.add(key)
     }
     setSelected(sel)
     setConfirmed(conf)
@@ -207,7 +208,7 @@ export default function SummerPage() {
         .from('juku_summer_availability')
         .delete()
         .eq('teacher_id', teacher.id)
-        .eq('is_confirmed', false)
+        .eq('confirmed_count', 0)
         .gte('date', SUMMER_PERIOD.start)
         .lte('date', SUMMER_PERIOD.end)
     }
