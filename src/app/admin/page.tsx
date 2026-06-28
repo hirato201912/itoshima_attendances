@@ -23,6 +23,7 @@ type SummerApplySlotRow = {
   date: string
   slot: number
   is_confirmed: boolean
+  assigned_teacher_id: string | null
 }
 
 const ORANGE = '#FF7F00'
@@ -453,7 +454,7 @@ export default function AdminPage() {
           .order('created_at', { ascending: false }),
         supabase
           .from('juku_summer_apply_slots')
-          .select('apply_id, date, slot, is_confirmed'),
+          .select('apply_id, date, slot, is_confirmed, assigned_teacher_id'),
       ])
       setApplyRows((applies ?? []) as SummerApplyRow[])
       setApplySlots((slots ?? []) as SummerApplySlotRow[])
@@ -725,6 +726,22 @@ export default function AdminPage() {
     setTogglingApplyConfirmKey(null)
   }
 
+  // 保護者申込：1コマに担当講師を割り当て（''=未割当=null）
+  const setApplyAssignment = async (applyId: string, date: string, slot: number, teacherId: string | null) => {
+    // 楽観的更新
+    setApplySlots(prev => prev.map(s =>
+      s.apply_id === applyId && s.date === date && s.slot === slot
+        ? { ...s, assigned_teacher_id: teacherId }
+        : s
+    ))
+    await supabase
+      .from('juku_summer_apply_slots')
+      .update({ assigned_teacher_id: teacherId })
+      .eq('apply_id', applyId)
+      .eq('date', date)
+      .eq('slot', slot)
+  }
+
   // 全件削除モーダルを開く（CSVダウンロード済みのときだけ押せる）
   const openBulkDeleteModal = () => {
     if (applyRows.length === 0 || !csvDownloadedThisSession) return
@@ -802,7 +819,9 @@ export default function AdminPage() {
 
   // 申込1件分のCSVダウンロード（紙配布用：日付ごとに1行）
   const downloadSingleApplyCsv = (apply: SummerApplyRow) => {
-    const headers = ['お子さんの名前', '学年', '希望コース', '申込日時', '日付', '曜日', 'コマ', '時間帯', 'メイン/予備', '状態', '要望']
+    const headers = ['お子さんの名前', '学年', '希望コース', '申込日時', '日付', '曜日', 'コマ', '時間帯', 'メイン/予備', '状態', '担当講師', '要望']
+    const teacherNameById = new Map<string, string>()
+    for (const t of summerTeachers) teacherNameById.set(t.id, t.name)
     const fmtDateTime = (iso: string) => {
       const d = new Date(iso)
       const y = d.getFullYear()
@@ -824,13 +843,14 @@ export default function AdminPage() {
     const courseText = apply.course ?? ''
     const body: string[][] = []
     if (slots.length === 0) {
-      body.push([apply.student_name, apply.grade ?? '', courseText, createdAt, '', '', '', '', '', '', notesText])
+      body.push([apply.student_name, apply.grade ?? '', courseText, createdAt, '', '', '', '', '', '', '', notesText])
     } else {
       slots.forEach((s, idx) => {
         const [, mm, dd] = s.date.split('-').map(Number)
         const dow = '日月火水木金土'[new Date(s.date + 'T00:00:00').getDay()]
         const info = slotInfoMap[s.slot]
         const tag = isMainSlot(s.slot) ? 'メイン' : '予備'
+        const teacherName = s.assigned_teacher_id ? (teacherNameById.get(s.assigned_teacher_id) ?? '') : ''
         body.push([
           idx === 0 ? apply.student_name : '',
           idx === 0 ? (apply.grade ?? '') : '',
@@ -842,6 +862,7 @@ export default function AdminPage() {
           `${info.start}〜${info.end}`,
           tag,
           s.is_confirmed ? '確定' : '希望',
+          teacherName,
           idx === 0 ? notesText : '',
         ])
       })
@@ -864,9 +885,11 @@ export default function AdminPage() {
   const downloadApplyCsv = () => {
     const headers = [
       '申込日時', 'お子さんの名前', '学年', '希望コース',
-      'メインコマ数', '予備コマ数', '合計コマ数', '確定コマ数',
-      '希望コマ一覧', '要望',
+      'メインコマ数', '予備コマ数', '合計コマ数', '確定コマ数', '担当未割当コマ数',
+      '希望コマ一覧', '担当割当一覧', '要望',
     ]
+    const teacherNameById = new Map<string, string>()
+    for (const t of summerTeachers) teacherNameById.set(t.id, t.name)
     const slotsByApply = new Map<string, SummerApplySlotRow[]>()
     for (const s of applySlots) {
       const list = slotsByApply.get(s.apply_id) ?? []
@@ -889,12 +912,19 @@ export default function AdminPage() {
       )
       const mainCount = slots.filter(s => isMainSlot(s.slot)).length
       const reserveCount = slots.length - mainCount
-      const confirmedCount = slots.filter(s => s.is_confirmed).length
+      const confirmedSlots = slots.filter(s => s.is_confirmed)
+      const confirmedCount = confirmedSlots.length
+      const unassignedCount = confirmedSlots.filter(s => !s.assigned_teacher_id).length
       const slotsLabel = slots.map(s => {
         const [, mm, dd] = s.date.split('-').map(Number)
         const tag = isMainSlot(s.slot) ? 'メイン' : '予備'
         const mark = s.is_confirmed ? '★' : ''
         return `${mark}${mm}/${dd} ${slotLabelOf(s.slot)}(${tag})`
+      }).join(' / ')
+      const assignLabel = confirmedSlots.map(s => {
+        const [, mm, dd] = s.date.split('-').map(Number)
+        const tname = s.assigned_teacher_id ? (teacherNameById.get(s.assigned_teacher_id) ?? '不明') : '未割当'
+        return `${mm}/${dd} ${slotLabelOf(s.slot)} → ${tname}`
       }).join(' / ')
       return [
         fmtDateTime(r.created_at),
@@ -905,7 +935,9 @@ export default function AdminPage() {
         String(reserveCount),
         String(slots.length),
         String(confirmedCount),
+        String(unassignedCount),
         slotsLabel,
+        assignLabel,
         r.notes ?? '',
       ]
     })
@@ -2003,6 +2035,59 @@ export default function AdminPage() {
                                           <div className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">{r.notes}</div>
                                         </div>
                                       )}
+                                      {(() => {
+                                        const confirmedSlots = slots
+                                          .filter(s => s.is_confirmed)
+                                          .slice()
+                                          .sort((a, b) => a.date.localeCompare(b.date) || a.slot - b.slot)
+                                        if (confirmedSlots.length === 0) return null
+                                        return (
+                                          <div className="mb-3 bg-white border border-green-300 rounded-lg px-3 py-2.5">
+                                            <div className="text-xs font-bold mb-2" style={{ color: '#15803d' }}>
+                                              担当割り当て
+                                              <span className="ml-2 font-normal text-gray-500">― 確定済みのコマに担当する先生をご指定ください</span>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              {confirmedSlots.map(s => {
+                                                const info = SUMMER_SLOTS.find(x => x.slot === s.slot)!
+                                                const [, mm, dd] = s.date.split('-').map(Number)
+                                                const dow = '日月火水木金土'[new Date(s.date + 'T00:00:00').getDay()]
+                                                const main = isMainSlot(s.slot)
+                                                return (
+                                                  <div key={`${s.date}_${s.slot}`} className="flex items-center gap-2 text-xs flex-wrap">
+                                                    <span className="tabular-nums text-gray-700 font-semibold whitespace-nowrap">
+                                                      {mm}/{dd}({dow}) {info.label} {info.start}〜{info.end}
+                                                    </span>
+                                                    <span
+                                                      className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap"
+                                                      style={
+                                                        main
+                                                          ? { backgroundColor: ORANGE, color: 'white' }
+                                                          : { backgroundColor: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }
+                                                      }
+                                                    >
+                                                      {main ? 'メイン' : '予備'}
+                                                    </span>
+                                                    <select
+                                                      value={s.assigned_teacher_id ?? ''}
+                                                      onChange={(e) => setApplyAssignment(r.id, s.date, s.slot, e.target.value || null)}
+                                                      className="ml-auto border-2 rounded px-2 py-1 text-xs bg-white font-semibold"
+                                                      style={{ borderColor: s.assigned_teacher_id ? '#16A34A' : '#e5e7eb', color: s.assigned_teacher_id ? '#15803d' : '#6b7280' }}
+                                                    >
+                                                      <option value="">— 担当を選ぶ —</option>
+                                                      {summerTeachers.map(t => (
+                                                        <option key={t.id} value={t.id}>
+                                                          {t.name} 先生
+                                                        </option>
+                                                      ))}
+                                                    </select>
+                                                  </div>
+                                                )
+                                              })}
+                                            </div>
+                                          </div>
+                                        )
+                                      })()}
                                       {dates.length === 0 ? (
                                         <div className="text-xs text-gray-500 px-2 py-1">希望コマの登録がありません</div>
                                       ) : (
