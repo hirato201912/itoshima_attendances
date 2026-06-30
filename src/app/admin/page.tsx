@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, SUMMER_PERIOD } from '@/types'
+import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, SUMMER_PERIOD, SUMMER_APPLY_PERIOD } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
 const MAIN_SLOTS = new Set<number>([2, 3])
@@ -25,6 +25,8 @@ type SummerApplySlotRow = {
   is_confirmed: boolean
   assigned_teacher_id: string | null
   subject: string | null
+  // false=保護者が申し込んだコマ / true=管理者が後から追加したコマ
+  added_by_admin: boolean
 }
 
 // 科目はコード内固定（DBには値のみ保存／表示ラベルだけ別管理）
@@ -342,6 +344,10 @@ export default function AdminPage() {
   const [expandedApplyId, setExpandedApplyId] = useState<string | null>(null)
   const [deletingApplyId, setDeletingApplyId] = useState<string | null>(null)
   const [togglingApplyConfirmKey, setTogglingApplyConfirmKey] = useState<string | null>(null)
+  // 管理者追加コマ用ピッカーの一時 state
+  const [adminAddDate, setAdminAddDate] = useState('')
+  const [adminAddSlot, setAdminAddSlot] = useState('')
+  const [addingAdminSlot, setAddingAdminSlot] = useState(false)
   const [bulkDeletingApply, setBulkDeletingApply] = useState(false)
   // 全件削除のブロック用：CSVを今セッションでダウンロードしたか、確認モーダル開閉、入力テキスト一致
   const [csvDownloadedThisSession, setCsvDownloadedThisSession] = useState(false)
@@ -454,6 +460,12 @@ export default function AdminPage() {
     return () => { supabase.removeChannel(channel) }
   }, [teacher])
 
+  // 展開する申込を切り替えたら「管理者追加」ピッカーをリセット
+  useEffect(() => {
+    setAdminAddDate('')
+    setAdminAddSlot('')
+  }, [expandedApplyId])
+
   // 保護者からの夏期講習申込データ取得＋リアルタイム購読
   useEffect(() => {
     if (!teacher) return
@@ -467,7 +479,7 @@ export default function AdminPage() {
           .order('created_at', { ascending: false }),
         supabase
           .from('juku_summer_apply_slots')
-          .select('apply_id, date, slot, is_confirmed, assigned_teacher_id, subject'),
+          .select('apply_id, date, slot, is_confirmed, assigned_teacher_id, subject, added_by_admin'),
       ])
       setApplyRows((applies ?? []) as SummerApplyRow[])
       setApplySlots((slots ?? []) as SummerApplySlotRow[])
@@ -770,6 +782,72 @@ export default function AdminPage() {
       .eq('slot', slot)
   }
 
+  // 申込フォームと同じ仕様の有効日付一覧（土日・お盆休みを除外）
+  const summerApplyDates = useMemo(() => {
+    const out: string[] = []
+    const start = new Date(SUMMER_APPLY_PERIOD.start + 'T00:00:00')
+    const end = new Date(SUMMER_APPLY_PERIOD.end + 'T00:00:00')
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dow = d.getDay()
+      if (dow === 0 || dow === 6) continue
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      const ds = `${y}-${m}-${day}`
+      const inClosed = SUMMER_APPLY_PERIOD.closedRanges.find(r => ds >= r.start && ds <= r.end)
+      if (inClosed) continue
+      out.push(ds)
+    }
+    return out
+  }, [])
+
+  // 管理者追加：1コマを追加（保護者と合意済みの前提で運用）
+  const addAdminApplySlot = async (applyId: string, date: string, slot: number) => {
+    // 重複ガード（保護者・管理者どちらが既に登録していても二重追加させない）
+    const exists = applySlots.some(s => s.apply_id === applyId && s.date === date && s.slot === slot)
+    if (exists) {
+      alert('このコマは既に登録されています')
+      return
+    }
+    setAddingAdminSlot(true)
+    // 楽観的更新
+    const newRow: SummerApplySlotRow = {
+      apply_id: applyId,
+      date,
+      slot,
+      is_confirmed: false,
+      assigned_teacher_id: null,
+      subject: null,
+      added_by_admin: true,
+    }
+    setApplySlots(prev => [...prev, newRow])
+    const { error } = await supabase
+      .from('juku_summer_apply_slots')
+      .insert({ apply_id: applyId, date, slot, added_by_admin: true })
+    if (error) {
+      // ロールバック
+      setApplySlots(prev => prev.filter(s => !(s.apply_id === applyId && s.date === date && s.slot === slot)))
+      alert('追加に失敗しました：' + error.message)
+    }
+    setAddingAdminSlot(false)
+  }
+
+  // 管理者追加：1コマを削除（保護者申込分は守る・二重ガード：UI＋DB条件）
+  const removeAdminApplySlot = async (applyId: string, date: string, slot: number) => {
+    const target = applySlots.find(s => s.apply_id === applyId && s.date === date && s.slot === slot)
+    if (!target || !target.added_by_admin) return
+    if (!confirm('この管理者追加コマを削除しますか？\n（保護者から申し込まれたコマは削除できません）')) return
+    // 楽観的削除
+    setApplySlots(prev => prev.filter(s => !(s.apply_id === applyId && s.date === date && s.slot === slot)))
+    await supabase
+      .from('juku_summer_apply_slots')
+      .delete()
+      .eq('apply_id', applyId)
+      .eq('date', date)
+      .eq('slot', slot)
+      .eq('added_by_admin', true) // DB側でも：保護者分は誤って消えない
+  }
+
   // 全件削除モーダルを開く（CSVダウンロード済みのときだけ押せる）
   const openBulkDeleteModal = () => {
     if (applyRows.length === 0 || !csvDownloadedThisSession) return
@@ -847,7 +925,7 @@ export default function AdminPage() {
 
   // 申込1件分のCSVダウンロード（紙配布用：日付ごとに1行）
   const downloadSingleApplyCsv = (apply: SummerApplyRow) => {
-    const headers = ['お子さんの名前', '学年', '希望コース', '申込日時', '日付', '曜日', 'コマ', '時間帯', 'メイン/予備', '状態', '担当講師', '科目', '要望']
+    const headers = ['お子さんの名前', '学年', '希望コース', '申込日時', '日付', '曜日', 'コマ', '時間帯', 'メイン/予備', '状態', '追加元', '担当講師', '科目', '要望']
     const teacherNameById = new Map<string, string>()
     for (const t of summerTeachers) teacherNameById.set(t.id, t.name)
     const fmtDateTime = (iso: string) => {
@@ -871,7 +949,7 @@ export default function AdminPage() {
     const courseText = apply.course ?? ''
     const body: string[][] = []
     if (slots.length === 0) {
-      body.push([apply.student_name, apply.grade ?? '', courseText, createdAt, '', '', '', '', '', '', '', '', notesText])
+      body.push([apply.student_name, apply.grade ?? '', courseText, createdAt, '', '', '', '', '', '', '', '', '', notesText])
     } else {
       slots.forEach((s, idx) => {
         const [, mm, dd] = s.date.split('-').map(Number)
@@ -880,6 +958,7 @@ export default function AdminPage() {
         const tag = isMainSlot(s.slot) ? 'メイン' : '予備'
         const teacherName = s.assigned_teacher_id ? (teacherNameById.get(s.assigned_teacher_id) ?? '') : ''
         const subjectLabel = s.subject ? (SUBJECT_LABEL[s.subject] ?? s.subject) : ''
+        const sourceLabel = s.added_by_admin ? '管理者' : '保護者'
         body.push([
           idx === 0 ? apply.student_name : '',
           idx === 0 ? (apply.grade ?? '') : '',
@@ -891,6 +970,7 @@ export default function AdminPage() {
           `${info.start}〜${info.end}`,
           tag,
           s.is_confirmed ? '確定' : '希望',
+          sourceLabel,
           teacherName,
           subjectLabel,
           idx === 0 ? notesText : '',
@@ -915,7 +995,7 @@ export default function AdminPage() {
   const downloadApplyCsv = () => {
     const headers = [
       '申込日時', 'お子さんの名前', '学年', '希望コース',
-      'メインコマ数', '予備コマ数', '合計コマ数', '確定コマ数', '担当未割当コマ数', '科目未指定コマ数',
+      'メインコマ数', '予備コマ数', '合計コマ数', '確定コマ数', '担当未割当コマ数', '科目未指定コマ数', '管理者追加コマ数',
       '希望コマ一覧', '担当割当一覧', '科目割当一覧', '要望',
     ]
     const teacherNameById = new Map<string, string>()
@@ -946,11 +1026,13 @@ export default function AdminPage() {
       const confirmedCount = confirmedSlots.length
       const unassignedCount = confirmedSlots.filter(s => !s.assigned_teacher_id).length
       const noSubjectCount = confirmedSlots.filter(s => !s.subject).length
+      const adminAddedCount = slots.filter(s => s.added_by_admin).length
       const slotsLabel = slots.map(s => {
         const [, mm, dd] = s.date.split('-').map(Number)
         const tag = isMainSlot(s.slot) ? 'メイン' : '予備'
-        const mark = s.is_confirmed ? '★' : ''
-        return `${mark}${mm}/${dd} ${slotLabelOf(s.slot)}(${tag})`
+        const confMark = s.is_confirmed ? '★' : ''
+        const adminMark = s.added_by_admin ? '＋' : ''
+        return `${confMark}${adminMark}${mm}/${dd} ${slotLabelOf(s.slot)}(${tag})`
       }).join(' / ')
       const assignLabel = confirmedSlots.map(s => {
         const [, mm, dd] = s.date.split('-').map(Number)
@@ -973,6 +1055,7 @@ export default function AdminPage() {
         String(confirmedCount),
         String(unassignedCount),
         String(noSubjectCount),
+        String(adminAddedCount),
         slotsLabel,
         assignLabel,
         subjectLabel,
@@ -2145,7 +2228,7 @@ export default function AdminPage() {
                                         <div className="overflow-x-auto">
                                           <div className="text-xs font-bold text-gray-600 mb-2">
                                             希望の日・時間帯（メイン={SUMMER_SLOTS.filter(s=>isMainSlot(s.slot)).map(s=>s.label).join('・')}）
-                                            <span className="ml-2 font-normal text-gray-500">― ✓をクリックすると緑の「確定」に切替（もう一度押すと希望に戻る）</span>
+                                            <span className="ml-2 font-normal text-gray-500">― ✓をクリックすると緑の「確定」に切替（もう一度押すと希望に戻る）／<span className="text-blue-700 font-bold">青の点線枠</span>は管理者追加コマ</span>
                                           </div>
                                           <table className="text-xs">
                                             <thead>
@@ -2183,6 +2266,7 @@ export default function AdminPage() {
                                                       const slotRow = slots.find(sl => sl.date === ds && sl.slot === s.slot)
                                                       const on = !!slotRow
                                                       const conf = !!slotRow?.is_confirmed
+                                                      const isAdminAdded = !!slotRow?.added_by_admin
                                                       const toggleKey = `${r.id}_${ds}_${s.slot}`
                                                       const isToggling = togglingApplyConfirmKey === toggleKey
                                                       return (
@@ -2192,8 +2276,12 @@ export default function AdminPage() {
                                                               onClick={() => toggleApplyConfirm(r.id, ds, s.slot, conf)}
                                                               disabled={isToggling}
                                                               className="inline-flex items-center justify-center w-6 h-6 rounded text-white text-[10px] font-bold leading-none disabled:opacity-50 hover:opacity-90 active:scale-95 transition-transform"
-                                                              style={{ backgroundColor: conf ? '#16A34A' : (main ? ORANGE : '#9ca3af') }}
-                                                              title={conf ? 'クリックで「希望」に戻す' : 'クリックで「確定」にする'}
+                                                              style={{
+                                                                backgroundColor: conf ? '#16A34A' : (main ? ORANGE : '#9ca3af'),
+                                                                outline: isAdminAdded ? '2px dashed #1d4ed8' : 'none',
+                                                                outlineOffset: isAdminAdded ? '1px' : '0',
+                                                              }}
+                                                              title={`${isAdminAdded ? '管理者追加コマ：' : '保護者申込コマ：'}${conf ? 'クリックで「希望」に戻す' : 'クリックで「確定」にする'}`}
                                                             >
                                                               {conf ? '確定' : '✓'}
                                                             </button>
@@ -2210,6 +2298,102 @@ export default function AdminPage() {
                                           </table>
                                         </div>
                                       )}
+                                      {/* 管理者追加コマセクション */}
+                                      {(() => {
+                                        const adminAdded = slots
+                                          .filter(s => s.added_by_admin)
+                                          .slice()
+                                          .sort((a, b) => a.date.localeCompare(b.date) || a.slot - b.slot)
+                                        return (
+                                          <div className="mt-3 bg-white border border-blue-200 rounded-lg px-3 py-2.5">
+                                            <div className="text-xs font-bold mb-2" style={{ color: '#1d4ed8' }}>
+                                              管理者追加コマ
+                                              <span className="ml-2 font-normal text-gray-500">― 保護者と合意の上で、後からコマを追加できます（保護者申込分は削除不可）</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 mb-2 flex-wrap text-xs">
+                                              <select
+                                                value={adminAddDate}
+                                                onChange={(e) => setAdminAddDate(e.target.value)}
+                                                className="border-2 border-gray-200 rounded px-2 py-1 text-xs bg-white font-semibold"
+                                                disabled={addingAdminSlot}
+                                              >
+                                                <option value="">— 日付 —</option>
+                                                {summerApplyDates.map(d => {
+                                                  const [, mm, dd] = d.split('-').map(Number)
+                                                  const dow = '日月火水木金土'[new Date(d + 'T00:00:00').getDay()]
+                                                  return <option key={d} value={d}>{mm}/{dd}({dow})</option>
+                                                })}
+                                              </select>
+                                              <select
+                                                value={adminAddSlot}
+                                                onChange={(e) => setAdminAddSlot(e.target.value)}
+                                                className="border-2 border-gray-200 rounded px-2 py-1 text-xs bg-white font-semibold"
+                                                disabled={addingAdminSlot}
+                                              >
+                                                <option value="">— コマ —</option>
+                                                {SUMMER_SLOTS.map(slotInfo => (
+                                                  <option key={slotInfo.slot} value={slotInfo.slot}>
+                                                    {slotInfo.label} {slotInfo.start}〜{slotInfo.end} {isMainSlot(slotInfo.slot) ? '(メイン)' : '(予備)'}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                              <button
+                                                onClick={async () => {
+                                                  if (!adminAddDate || !adminAddSlot) return
+                                                  await addAdminApplySlot(r.id, adminAddDate, parseInt(adminAddSlot))
+                                                  setAdminAddDate('')
+                                                  setAdminAddSlot('')
+                                                }}
+                                                disabled={!adminAddDate || !adminAddSlot || addingAdminSlot}
+                                                className="px-3 py-1 rounded text-white text-xs font-bold disabled:opacity-40"
+                                                style={{ backgroundColor: '#1d4ed8' }}
+                                              >
+                                                {addingAdminSlot ? '追加中…' : '＋ 追加'}
+                                              </button>
+                                            </div>
+                                            {adminAdded.length === 0 ? (
+                                              <div className="text-[11px] text-gray-400 px-1">管理者追加コマはまだありません</div>
+                                            ) : (
+                                              <div className="space-y-1">
+                                                {adminAdded.map(s => {
+                                                  const info = SUMMER_SLOTS.find(x => x.slot === s.slot)!
+                                                  const [, mm, dd] = s.date.split('-').map(Number)
+                                                  const dow = '日月火水木金土'[new Date(s.date + 'T00:00:00').getDay()]
+                                                  return (
+                                                    <div key={`${s.date}_${s.slot}`} className="flex items-center gap-2 text-xs flex-wrap">
+                                                      <span className="font-bold" style={{ color: '#1d4ed8' }}>＋</span>
+                                                      <span className="tabular-nums text-gray-700 whitespace-nowrap">
+                                                        {mm}/{dd}({dow}) {info.label} {info.start}〜{info.end}
+                                                      </span>
+                                                      <span
+                                                        className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap"
+                                                        style={
+                                                          isMainSlot(s.slot)
+                                                            ? { backgroundColor: ORANGE, color: 'white' }
+                                                            : { backgroundColor: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }
+                                                        }
+                                                      >
+                                                        {isMainSlot(s.slot) ? 'メイン' : '予備'}
+                                                      </span>
+                                                      {s.is_confirmed && (
+                                                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap" style={{ backgroundColor: '#16A34A', color: 'white' }}>
+                                                          確定
+                                                        </span>
+                                                      )}
+                                                      <button
+                                                        onClick={() => removeAdminApplySlot(r.id, s.date, s.slot)}
+                                                        className="ml-auto text-[11px] font-bold text-red-600 hover:text-red-700 underline"
+                                                      >
+                                                        削除
+                                                      </button>
+                                                    </div>
+                                                  )
+                                                })}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )
+                                      })()}
                                     </td>
                                   </tr>
                                 )
