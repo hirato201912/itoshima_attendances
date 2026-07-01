@@ -17,6 +17,8 @@ type SummerApplyRow = {
   course: string | null
   notes: string | null
   created_at: string
+  is_completed: boolean
+  completed_at: string | null
 }
 type SummerApplySlotRow = {
   apply_id: string
@@ -343,6 +345,7 @@ export default function AdminPage() {
   const [applyLoading, setApplyLoading] = useState(false)
   const [expandedApplyId, setExpandedApplyId] = useState<string | null>(null)
   const [deletingApplyId, setDeletingApplyId] = useState<string | null>(null)
+  const [togglingCompletedId, setTogglingCompletedId] = useState<string | null>(null)
   const [togglingApplyConfirmKey, setTogglingApplyConfirmKey] = useState<string | null>(null)
   // 管理者追加コマ用ピッカーの一時 state
   const [adminAddDate, setAdminAddDate] = useState('')
@@ -475,7 +478,7 @@ export default function AdminPage() {
       const [{ data: applies }, { data: slots }] = await Promise.all([
         supabase
           .from('juku_summer_apply')
-          .select('id, student_name, grade, course, notes, created_at')
+          .select('id, student_name, grade, course, notes, created_at, is_completed, completed_at')
           .order('created_at', { ascending: false }),
         supabase
           .from('juku_summer_apply_slots')
@@ -869,6 +872,20 @@ export default function AdminPage() {
     setBulkDeletingApply(false)
     setBulkDeleteModalOpen(false)
     setBulkDeleteConfirmText('')
+  }
+
+  // 申込の「完了」フラグをトグル（管理者が明示的にオン／オフ）
+  const handleToggleCompleted = async (applyId: string, current: boolean) => {
+    setTogglingCompletedId(applyId)
+    const next = !current
+    const nextAt = next ? new Date().toISOString() : null
+    // 楽観更新（Realtime購読が実DBの結果で上書きする）
+    setApplyRows(prev => prev.map(r => r.id === applyId ? { ...r, is_completed: next, completed_at: nextAt } : r))
+    await supabase
+      .from('juku_summer_apply')
+      .update({ is_completed: next, completed_at: nextAt })
+      .eq('id', applyId)
+    setTogglingCompletedId(null)
   }
 
   // 申込を削除（CASCADEで slots も消える）
@@ -2046,6 +2063,7 @@ export default function AdminPage() {
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">合計</th>
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">確定</th>
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">要望</th>
+                          <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">完了</th>
                           <th className="px-3 py-2 text-center font-bold text-gray-600 whitespace-nowrap">操作</th>
                         </tr>
                       </thead>
@@ -2099,10 +2117,6 @@ export default function AdminPage() {
                                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border" style={{ borderColor: '#d1d5db', color: '#6b7280', backgroundColor: 'white' }}>
                                       未
                                     </span>
-                                  ) : confirmedCount === slots.length ? (
-                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded text-white" style={{ backgroundColor: '#16A34A' }}>
-                                      完了 {confirmedCount}/{slots.length}
-                                    </span>
                                   ) : (
                                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#DCFCE7', color: '#166534' }}>
                                       {confirmedCount}/{slots.length}
@@ -2116,6 +2130,31 @@ export default function AdminPage() {
                                     </span>
                                   ) : (
                                     <span className="text-gray-300 text-xs">−</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2.5 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                                  {r.is_completed ? (
+                                    <div className="inline-flex items-center gap-1.5">
+                                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded text-white" style={{ backgroundColor: '#16A34A' }}>
+                                        完了 ✓
+                                      </span>
+                                      <button
+                                        onClick={() => handleToggleCompleted(r.id, r.is_completed)}
+                                        disabled={togglingCompletedId === r.id}
+                                        className="text-[10px] text-gray-500 hover:text-gray-700 disabled:opacity-40 underline"
+                                      >
+                                        {togglingCompletedId === r.id ? '…' : '解除'}
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleToggleCompleted(r.id, r.is_completed)}
+                                      disabled={togglingCompletedId === r.id}
+                                      className="text-[10px] font-bold px-2 py-1 rounded border hover:bg-green-50 disabled:opacity-40"
+                                      style={{ borderColor: '#16A34A', color: '#166534' }}
+                                    >
+                                      {togglingCompletedId === r.id ? '更新中…' : '完了にする'}
+                                    </button>
                                   )}
                                 </td>
                                 <td className="px-3 py-2.5 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
@@ -2149,7 +2188,7 @@ export default function AdminPage() {
                                 }
                                 return (
                                   <tr className="bg-orange-50/30">
-                                    <td colSpan={10} className="px-4 py-3">
+                                    <td colSpan={11} className="px-4 py-3">
                                       {hasNotes && (
                                         <div className="mb-3 bg-white border border-orange-200 rounded-lg px-3 py-2">
                                           <div className="text-[11px] font-bold text-gray-500 mb-1">ご要望</div>
