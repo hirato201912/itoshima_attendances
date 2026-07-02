@@ -1907,11 +1907,16 @@ export default function AdminPage() {
                                         <thead>
                                           <tr>
                                             <th className="px-2 py-1 text-left font-bold text-gray-500 whitespace-nowrap"></th>
-                                            {dates.map(ds => (
-                                              <th key={ds} className="px-1.5 py-1 text-center font-normal text-gray-500 whitespace-nowrap tabular-nums">
-                                                {formatDateShort(ds)}
-                                              </th>
-                                            ))}
+                                            {dates.map(ds => {
+                                              const dow = dowOf(ds)
+                                              const color = dow === 0 ? '#ef4444' : dow === 6 ? '#3b82f6' : '#6b7280'
+                                              return (
+                                                <th key={ds} className="px-1.5 py-1 text-center font-normal whitespace-nowrap tabular-nums" style={{ color }}>
+                                                  <div>{formatDateShort(ds)}</div>
+                                                  <div className="text-[10px]">({dowLabel(ds)})</div>
+                                                </th>
+                                              )
+                                            })}
                                           </tr>
                                         </thead>
                                         <tbody>
