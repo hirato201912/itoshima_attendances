@@ -25,10 +25,9 @@ function isClosedDate(date: string) {
   return dow === 0 || dow === 6 || CLOSED_DATES.has(date)
 }
 
-function nextMonthStr() {
+function currentMonthStr() {
   const now = new Date()
-  const d = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 }
 
 function todayStr() {
@@ -52,7 +51,7 @@ type SlotKey = { date: string; slot: number }
 export default function ShiftPage() {
   const router = useRouter()
   const [teacher, setTeacher] = useState<LoggedInTeacher | null>(null)
-  const [viewMonth, setViewMonth] = useState(nextMonthStr)
+  const [viewMonth, setViewMonth] = useState(currentMonthStr)
   const [requests, setRequests] = useState<SlotKey[]>([])
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
