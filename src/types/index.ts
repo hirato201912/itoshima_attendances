@@ -78,6 +78,16 @@ export const SUMMER_APPLY_PERIOD = {
   ],
 } as const
 
+// メインの時間帯は②・③。ただし下記の日付は全時間帯を「予備」として運用する
+export const RESERVE_ONLY_DATES: ReadonlyArray<string> = [
+  '2026-08-03',
+]
+
+export function isMainSlotOnDate(date: string, slot: number): boolean {
+  if (RESERVE_ONLY_DATES.includes(date)) return false
+  return slot === 2 || slot === 3
+}
+
 export type SummerAvailability = {
   id: string
   teacher_id: string

@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
-import { SUMMER_SLOTS, SUMMER_APPLY_PERIOD, APPLY_GRADES } from '@/types'
+import { SUMMER_SLOTS, SUMMER_APPLY_PERIOD, APPLY_GRADES, RESERVE_ONLY_DATES, isMainSlotOnDate } from '@/types'
 import type { ApplyGrade } from '@/types'
 
 const ORANGE = '#FF7F00'
@@ -167,7 +167,10 @@ export default function SummerApplyPage() {
   }
 
   const mainCount = useMemo(
-    () => Array.from(selected).filter(k => isMainSlot(parseInt(k.split('_')[1]))).length,
+    () => Array.from(selected).filter(k => {
+      const [d, slotStr] = k.split('_')
+      return isMainSlotOnDate(d, parseInt(slotStr))
+    }).length,
     [selected]
   )
   const reserveCount = selected.size - mainCount
@@ -340,7 +343,7 @@ export default function SummerApplyPage() {
                     </div>
                     <div className="space-y-1 pl-1">
                       {g.slots.map(slot => {
-                        const main = isMainSlot(slot)
+                        const main = isMainSlotOnDate(g.date, slot)
                         const info = slotInfoMap[slot]
                         return (
                           <div key={slot} className="flex items-center gap-2 text-sm">
@@ -773,6 +776,15 @@ export default function SummerApplyPage() {
               お席の都合がつかない場合に <span className="font-bold">①・④・⑤（予備）を組み合わせて</span> ご調整することがあります。
               予備にも来られそうな枠があれば、お席のご用意がしやすくなります。
             </p>
+            {RESERVE_ONLY_DATES.length > 0 && (
+              <p className="text-xs font-bold mt-1.5 leading-relaxed" style={{ color: '#B45309' }}>
+                ※{RESERVE_ONLY_DATES.map(d => {
+                  const [, m, dd] = d.split('-').map(Number)
+                  const dow = '日月火水木金土'[new Date(d + 'T00:00:00').getDay()]
+                  return `${m}/${dd}（${dow}）`
+                }).join('・')}は、すべての時間帯が「予備」でのご案内となります。
+              </p>
+            )}
           </div>
 
           {/* 時間帯の凡例 */}
@@ -863,9 +875,12 @@ export default function SummerApplyPage() {
                     <div className="w-12 shrink-0 pl-1 text-xs tabular-nums flex flex-col justify-center text-gray-700">
                       <div className="font-semibold leading-tight">{dateLabel}</div>
                       <div className="text-[10px] leading-tight text-gray-500">({dayLabel})</div>
+                      {RESERVE_ONLY_DATES.includes(row.date) && (
+                        <div className="text-[8px] font-bold leading-tight" style={{ color: '#B45309' }}>予備のみ</div>
+                      )}
                     </div>
                     {SUMMER_SLOTS.map(s => {
-                      const main = isMainSlot(s.slot)
+                      const main = isMainSlotOnDate(row.date, s.slot)
                       const on = has(row.date, s.slot)
                       return (
                         <div

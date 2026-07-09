@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, SUMMER_PERIOD, SUMMER_APPLY_PERIOD } from '@/types'
+import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, SUMMER_PERIOD, SUMMER_APPLY_PERIOD, isMainSlotOnDate } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
 const MAIN_SLOTS = new Set<number>([2, 3])
@@ -293,7 +293,7 @@ type ShiftRow = {
 export default function AdminPage() {
   const router = useRouter()
   const [teacher, setTeacher] = useState<LoggedInTeacher | null>(null)
-  const [activeTab, setActiveTab] = useState<'attendance' | 'shift' | 'summer' | 'apply'>('attendance')
+  const [activeTab, setActiveTab] = useState<'attendance' | 'shift' | 'summer' | 'apply' | 'map'>('attendance')
 
   // 勤怠タブ
   const [selectedMonth, setSelectedMonth] = useState(currentMonth)
@@ -356,6 +356,21 @@ export default function AdminPage() {
   const [csvDownloadedThisSession, setCsvDownloadedThisSession] = useState(false)
   const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false)
   const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState('')
+
+  // 割当マップタブ：選択中の日付×コマ／表示軸（teacher=講師別1日ボード・slot=コマ別）／表示モード（detail=セル内に名前まで表示）
+  const [selectedMapCell, setSelectedMapCell] = useState<{ date: string; slot: number } | null>(null)
+  const [mapAxis, setMapAxis] = useState<'teacher' | 'slot'>('teacher')
+  const [mapDate, setMapDate] = useState<string>(SUMMER_APPLY_PERIOD.start)
+  const [mapViewMode, setMapViewMode] = useState<'detail' | 'compact'>('detail')
+  const mapDetailRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (selectedMapCell && mapDetailRef.current) {
+      requestAnimationFrame(() => {
+        mapDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      })
+    }
+  }, [selectedMapCell])
 
   useEffect(() => {
     const saved = localStorage.getItem('juku_teacher')
@@ -972,7 +987,7 @@ export default function AdminPage() {
         const [, mm, dd] = s.date.split('-').map(Number)
         const dow = '日月火水木金土'[new Date(s.date + 'T00:00:00').getDay()]
         const info = slotInfoMap[s.slot]
-        const tag = isMainSlot(s.slot) ? 'メイン' : '予備'
+        const tag = isMainSlotOnDate(s.date, s.slot) ? 'メイン' : '予備'
         const teacherName = s.assigned_teacher_id ? (teacherNameById.get(s.assigned_teacher_id) ?? '') : ''
         const subjectLabel = s.subject ? (SUBJECT_LABEL[s.subject] ?? s.subject) : ''
         const sourceLabel = s.added_by_admin ? '管理者' : '保護者'
@@ -1037,7 +1052,7 @@ export default function AdminPage() {
       const slots = (slotsByApply.get(r.id) ?? []).slice().sort((a, b) =>
         a.date.localeCompare(b.date) || a.slot - b.slot
       )
-      const mainCount = slots.filter(s => isMainSlot(s.slot)).length
+      const mainCount = slots.filter(s => isMainSlotOnDate(s.date, s.slot)).length
       const reserveCount = slots.length - mainCount
       const confirmedSlots = slots.filter(s => s.is_confirmed)
       const confirmedCount = confirmedSlots.length
@@ -1046,7 +1061,7 @@ export default function AdminPage() {
       const adminAddedCount = slots.filter(s => s.added_by_admin).length
       const slotsLabel = slots.map(s => {
         const [, mm, dd] = s.date.split('-').map(Number)
-        const tag = isMainSlot(s.slot) ? 'メイン' : '予備'
+        const tag = isMainSlotOnDate(s.date, s.slot) ? 'メイン' : '予備'
         const confMark = s.is_confirmed ? '★' : ''
         const adminMark = s.added_by_admin ? '＋' : ''
         return `${confMark}${adminMark}${mm}/${dd} ${slotLabelOf(s.slot)}(${tag})`
@@ -1126,11 +1141,12 @@ export default function AdminPage() {
       {/* タブバー */}
       <div className="border-b border-gray-200 bg-white">
         <div className="max-w-screen-xl mx-auto px-6 flex gap-1 pt-2">
-          {(['attendance', 'shift', 'summer', 'apply'] as const).map((tab) => {
+          {(['attendance', 'shift', 'summer', 'apply', 'map'] as const).map((tab) => {
             const label = tab === 'attendance' ? '勤怠管理'
               : tab === 'shift' ? '空き時間帯'
               : tab === 'summer' ? '夏期講習'
-              : '申込一覧'
+              : tab === 'apply' ? '申込一覧'
+              : '割当マップ'
             return (
               <button
                 key={tab}
@@ -2003,7 +2019,7 @@ export default function AdminPage() {
             return `${mm}/${dd} ${hh}:${mi}`
           }
           const totalSlots = applySlots.length
-          const totalMain = applySlots.filter(s => isMainSlot(s.slot)).length
+          const totalMain = applySlots.filter(s => isMainSlotOnDate(s.date, s.slot)).length
           const totalReserve = totalSlots - totalMain
 
           return (
@@ -2075,7 +2091,7 @@ export default function AdminPage() {
                       <tbody className="divide-y divide-gray-100">
                         {applyRows.map(r => {
                           const slots = slotsByApply.get(r.id) ?? []
-                          const mainCount = slots.filter(s => isMainSlot(s.slot)).length
+                          const mainCount = slots.filter(s => isMainSlotOnDate(s.date, s.slot)).length
                           const reserveCount = slots.length - mainCount
                           const confirmedCount = slots.filter(s => s.is_confirmed).length
                           const isExpanded = expandedApplyId === r.id
@@ -2217,7 +2233,7 @@ export default function AdminPage() {
                                                 const info = SUMMER_SLOTS.find(x => x.slot === s.slot)!
                                                 const [, mm, dd] = s.date.split('-').map(Number)
                                                 const dow = '日月火水木金土'[new Date(s.date + 'T00:00:00').getDay()]
-                                                const main = isMainSlot(s.slot)
+                                                const main = isMainSlotOnDate(s.date, s.slot)
                                                 return (
                                                   <div key={`${s.date}_${s.slot}`} className="flex items-center gap-2 text-xs flex-wrap">
                                                     <span className="tabular-nums text-gray-700 font-semibold whitespace-nowrap">
@@ -2311,6 +2327,7 @@ export default function AdminPage() {
                                                       const on = !!slotRow
                                                       const conf = !!slotRow?.is_confirmed
                                                       const isAdminAdded = !!slotRow?.added_by_admin
+                                                      const cellMain = isMainSlotOnDate(ds, s.slot)
                                                       const toggleKey = `${r.id}_${ds}_${s.slot}`
                                                       const isToggling = togglingApplyConfirmKey === toggleKey
                                                       return (
@@ -2321,7 +2338,7 @@ export default function AdminPage() {
                                                               disabled={isToggling}
                                                               className="inline-flex items-center justify-center w-6 h-6 rounded text-white text-[10px] font-bold leading-none disabled:opacity-50 hover:opacity-90 active:scale-95 transition-transform"
                                                               style={{
-                                                                backgroundColor: conf ? '#16A34A' : (main ? ORANGE : '#9ca3af'),
+                                                                backgroundColor: conf ? '#16A34A' : (cellMain ? ORANGE : '#9ca3af'),
                                                                 outline: isAdminAdded ? '2px dashed #1d4ed8' : 'none',
                                                                 outlineOffset: isAdminAdded ? '1px' : '0',
                                                               }}
@@ -2377,7 +2394,7 @@ export default function AdminPage() {
                                                 <option value="">— コマ —</option>
                                                 {SUMMER_SLOTS.map(slotInfo => (
                                                   <option key={slotInfo.slot} value={slotInfo.slot}>
-                                                    {slotInfo.label} {slotInfo.start}〜{slotInfo.end} {isMainSlot(slotInfo.slot) ? '(メイン)' : '(予備)'}
+                                                    {slotInfo.label} {slotInfo.start}〜{slotInfo.end} {(adminAddDate ? isMainSlotOnDate(adminAddDate, slotInfo.slot) : isMainSlot(slotInfo.slot)) ? '(メイン)' : '(予備)'}
                                                   </option>
                                                 ))}
                                               </select>
@@ -2412,12 +2429,12 @@ export default function AdminPage() {
                                                       <span
                                                         className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap"
                                                         style={
-                                                          isMainSlot(s.slot)
+                                                          isMainSlotOnDate(s.date, s.slot)
                                                             ? { backgroundColor: ORANGE, color: 'white' }
                                                             : { backgroundColor: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }
                                                         }
                                                       >
-                                                        {isMainSlot(s.slot) ? 'メイン' : '予備'}
+                                                        {isMainSlotOnDate(s.date, s.slot) ? 'メイン' : '予備'}
                                                       </span>
                                                       {s.is_confirmed && (
                                                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap" style={{ backgroundColor: '#16A34A', color: 'white' }}>
@@ -2447,6 +2464,656 @@ export default function AdminPage() {
                         })}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              )}
+            </>
+          )
+        })()}
+
+        {/* ===== 割当マップタブ（日付×コマで申込と講師の状況を俯瞰） ===== */}
+        {activeTab === 'map' && (() => {
+          const teacherNameById = new Map<string, string>()
+          for (const t of summerTeachers) teacherNameById.set(t.id, t.name)
+          const applyById = new Map<string, SummerApplyRow>()
+          for (const a of applyRows) applyById.set(a.id, a)
+
+          // 日付×コマごとに 申込（生徒）と 出られる講師 をまとめる
+          type MapCell = {
+            students: SummerApplySlotRow[]
+            teachers: { teacher_id: string; confirmed_count: number }[]
+          }
+          const cellMap = new Map<string, MapCell>()
+          const cellOf = (date: string, slot: number): MapCell => {
+            const key = `${date}_${slot}`
+            let c = cellMap.get(key)
+            if (!c) {
+              c = { students: [], teachers: [] }
+              cellMap.set(key, c)
+            }
+            return c
+          }
+          for (const s of applySlots) cellOf(s.date, s.slot).students.push(s)
+          for (const r of summerRows) {
+            if (r.date < SUMMER_APPLY_PERIOD.start || r.date > SUMMER_APPLY_PERIOD.end) continue
+            cellOf(r.date, r.slot).teachers.push({ teacher_id: r.teacher_id, confirmed_count: r.confirmed_count })
+          }
+
+          // 講師別ビュー用：講師×日付×コマ → 出勤希望（確定数）／割当済み生徒
+          const availMap = new Map<string, number>()
+          for (const r of summerRows) {
+            if (r.date < SUMMER_APPLY_PERIOD.start || r.date > SUMMER_APPLY_PERIOD.end) continue
+            availMap.set(`${r.teacher_id}_${r.date}_${r.slot}`, r.confirmed_count)
+          }
+          const assignedMap = new Map<string, SummerApplySlotRow[]>()
+          for (const s of applySlots) {
+            if (!s.assigned_teacher_id) continue
+            const k = `${s.assigned_teacher_id}_${s.date}_${s.slot}`
+            const list = assignedMap.get(k) ?? []
+            list.push(s)
+            assignedMap.set(k, list)
+          }
+
+          // セルの状態：done=全員確定＆担当済 / working=対応中 / noTeacher=申込ありだが講師なし / supplyOnly=講師のみ / empty=何もなし
+          const statusOf = (c: MapCell | undefined) => {
+            if (!c || c.students.length === 0) {
+              return c && c.teachers.length > 0 ? 'supplyOnly' : 'empty'
+            }
+            const demand = c.students.length
+            const confirmedN = c.students.filter(s => s.is_confirmed).length
+            const assignedN = c.students.filter(s => s.is_confirmed && s.assigned_teacher_id).length
+            if (confirmedN === demand && assignedN === demand) return 'done'
+            if (c.teachers.length === 0) return 'noTeacher'
+            return 'working'
+          }
+          const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
+            done: { bg: '#DCFCE7', fg: '#166534' },
+            working: { bg: '#FEF3C7', fg: '#92400E' },
+            noTeacher: { bg: '#FEE2E2', fg: '#991B1B' },
+            supplyOnly: { bg: '#F9FAFB', fg: '#9ca3af' },
+            empty: { bg: '#F9FAFB', fg: '#d1d5db' },
+          }
+
+          // 全体サマリー
+          const totalDemand = applySlots.length
+          const totalConfirmed = applySlots.filter(s => s.is_confirmed).length
+          const totalAssigned = applySlots.filter(s => s.is_confirmed && s.assigned_teacher_id).length
+          let workingCells = 0
+          let noTeacherCells = 0
+          for (const c of cellMap.values()) {
+            const st = statusOf(c)
+            if (st === 'working') workingCells++
+            else if (st === 'noTeacher') noTeacherCells++
+          }
+
+          const fmtD = (ds: string) => {
+            const [, m, d] = ds.split('-').map(Number)
+            return `${m}/${d}`
+          }
+          const dowOf = (ds: string) => new Date(ds + 'T00:00:00').getDay()
+
+          // お盆休みなどの休校区間を行間の区切りとして挟む
+          const dateRows: { date: string; sepLabel?: string }[] = []
+          let prevDate: string | null = null
+          for (const ds of summerApplyDates) {
+            let sepLabel: string | undefined
+            if (prevDate) {
+              const p = prevDate
+              const closed = SUMMER_APPLY_PERIOD.closedRanges.find(r => r.start > p && r.end < ds)
+              if (closed) sepLabel = `${closed.label} ${fmtD(closed.start)}〜${fmtD(closed.end)}`
+            }
+            dateRows.push({ date: ds, sepLabel })
+            prevDate = ds
+          }
+
+          const sel = selectedMapCell
+          const selCell = sel ? cellMap.get(`${sel.date}_${sel.slot}`) : undefined
+          const selSlotInfo = sel ? SUMMER_SLOTS.find(s => s.slot === sel.slot) : undefined
+
+          return (
+            <>
+              <div className="bg-white rounded-2xl shadow px-6 py-4">
+                <div className="flex items-baseline gap-3 flex-wrap">
+                  <span className="text-base font-bold text-gray-800">夏期講習 割当マップ</span>
+                  <span className="text-sm text-gray-500">
+                    期間：{fmtD(SUMMER_APPLY_PERIOD.start)} 〜 {fmtD(SUMMER_APPLY_PERIOD.end)}
+                  </span>
+                  <span className="text-sm text-gray-600">
+                    申込コマ <span className="font-bold text-gray-800 tabular-nums">{totalDemand}</span>
+                    ／ 確定 <span className="font-bold tabular-nums" style={{ color: '#16A34A' }}>{totalConfirmed}</span>
+                    ／ 担当割当済 <span className="font-bold tabular-nums" style={{ color: '#16A34A' }}>{totalAssigned}</span>
+                  </span>
+                  {(workingCells > 0 || noTeacherCells > 0) && (
+                    <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+                      要対応 {workingCells + noTeacherCells} コマ{noTeacherCells > 0 ? `（うち講師不足 ${noTeacherCells}）` : ''}
+                    </span>
+                  )}
+                  <div className="ml-auto flex items-center gap-2 self-center">
+                    <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+                      {(['teacher', 'slot'] as const).map(m => (
+                        <button
+                          key={m}
+                          onClick={() => setMapAxis(m)}
+                          className="px-4 py-1.5 rounded-lg text-xs font-bold transition-colors"
+                          style={mapAxis === m
+                            ? { backgroundColor: '#fff', color: '#1f2937', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }
+                            : { color: '#6b7280' }}
+                        >
+                          {m === 'teacher' ? '講師別（組み合わせ）' : 'コマ別'}
+                        </button>
+                      ))}
+                    </div>
+                    {mapAxis === 'slot' && (
+                      <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+                        {(['detail', 'compact'] as const).map(m => (
+                          <button
+                            key={m}
+                            onClick={() => setMapViewMode(m)}
+                            className="px-4 py-1.5 rounded-lg text-xs font-bold transition-colors"
+                            style={mapViewMode === m
+                              ? { backgroundColor: '#fff', color: '#1f2937', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }
+                              : { color: '#6b7280' }}
+                          >
+                            {m === 'detail' ? 'くわしく' : 'コンパクト'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="text-xs text-gray-400 mt-1">
+                  {mapAxis === 'teacher'
+                    ? '日付を選ぶと、その日に出られる講師ごとの2枠（上下2段）にどの生徒が入っているかが見えます。生徒ブロックをクリックすると申込一覧タブが開き、「空き」をクリックするとそのコマの詳細が下に出ます。最下段は担当がまだ決まっていない生徒です。'
+                    : mapViewMode === 'detail'
+                      ? '各コマに申込生徒（確定状況・担当の先生）と出られる講師がそのまま表示されます。セルをクリックするとさらに詳しい一覧が下に出ます。'
+                      : 'セルをクリックすると、その日時の申込生徒と出られる講師の一覧が下に表示されます。'}
+                  申込・シフトが更新されると自動で反映されます。
+                </div>
+              </div>
+
+              {(applyLoading || summerLoading) ? (
+                <div className="bg-white rounded-2xl shadow p-12 text-center text-gray-400">読み込み中...</div>
+              ) : mapAxis === 'teacher' ? (
+                (() => {
+                  const di = summerApplyDates.indexOf(mapDate)
+                  // その日に出勤希望がある、または担当が入っている講師だけを表示
+                  const dayTeachers = summerTeachers.filter(t =>
+                    SUMMER_SLOTS.some(s =>
+                      availMap.has(`${t.id}_${mapDate}_${s.slot}`) ||
+                      (assignedMap.get(`${t.id}_${mapDate}_${s.slot}`) ?? []).length > 0
+                    )
+                  )
+                  return (
+                    <div className="bg-white rounded-2xl shadow overflow-hidden">
+                      {/* 日付ナビ */}
+                      <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => di > 0 && setMapDate(summerApplyDates[di - 1])}
+                          disabled={di <= 0}
+                          className="px-3 py-1.5 rounded-lg border-2 border-gray-200 text-xs font-bold text-gray-600 disabled:opacity-30 bg-white"
+                        >
+                          ← 前の日
+                        </button>
+                        <select
+                          value={mapDate}
+                          onChange={e => { setMapDate(e.target.value); setSelectedMapCell(null) }}
+                          className="border-2 border-gray-200 rounded-lg px-3 py-1.5 text-sm font-bold bg-white"
+                        >
+                          {summerApplyDates.map(d => (
+                            <option key={d} value={d}>
+                              {fmtD(d)}（{'日月火水木金土'[dowOf(d)]}）
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => di < summerApplyDates.length - 1 && setMapDate(summerApplyDates[di + 1])}
+                          disabled={di >= summerApplyDates.length - 1}
+                          className="px-3 py-1.5 rounded-lg border-2 border-gray-200 text-xs font-bold text-gray-600 disabled:opacity-30 bg-white"
+                        >
+                          次の日 →
+                        </button>
+                        <span className="text-xs text-gray-400 ml-2">この日に出られる講師・担当のある講師だけを表示しています</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs" style={{ tableLayout: 'fixed', minWidth: 820 }}>
+                          <thead>
+                            <tr className="border-b border-gray-100 bg-orange-50">
+                              <th className="px-2 py-2 text-left font-bold text-gray-600" style={{ width: 96 }}>講師</th>
+                              {SUMMER_SLOTS.map(s => (
+                                <th key={s.slot} className="px-2 py-2 text-center whitespace-nowrap border-l border-gray-100">
+                                  <div className="font-bold" style={{ color: isMainSlotOnDate(mapDate, s.slot) ? ORANGE : '#9ca3af' }}>
+                                    {s.label} {isMainSlotOnDate(mapDate, s.slot) ? 'メイン' : '予備'}
+                                  </div>
+                                  <div className="text-[10px] font-normal text-gray-500">{s.start}〜{s.end}</div>
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dayTeachers.length === 0 ? (
+                              <tr>
+                                <td colSpan={1 + SUMMER_SLOTS.length} className="px-4 py-10 text-center text-gray-400">
+                                  この日に出られる講師・担当のある講師はいません
+                                </td>
+                              </tr>
+                            ) : dayTeachers.map(t => (
+                              <Fragment key={t.id}>
+                                {[0, 1].map(lane => (
+                                  <tr key={lane} className={lane === 0 ? 'border-t-2 border-gray-200' : ''}>
+                                    {lane === 0 && (
+                                      <td rowSpan={2} className="px-2 py-2 font-bold text-gray-800 align-middle border-r border-gray-100">
+                                        {t.name}
+                                      </td>
+                                    )}
+                                    {SUMMER_SLOTS.map(s => {
+                                      const conf = availMap.get(`${t.id}_${mapDate}_${s.slot}`)
+                                      const assigned = assignedMap.get(`${t.id}_${mapDate}_${s.slot}`) ?? []
+                                      const isAvail = conf !== undefined
+                                      // 上段=1人目、下段=2人目（万一3人以上入っていたら下段に積む）
+                                      const laneStudents = lane === 0 ? assigned.slice(0, 1) : assigned.slice(1)
+                                      return (
+                                        <td
+                                          key={s.slot}
+                                          className={`p-1 align-top border-l border-gray-100 ${lane === 1 ? 'border-t border-dashed border-gray-200' : ''}`}
+                                          style={{ height: 54, backgroundColor: isAvail ? undefined : '#F9FAFB' }}
+                                        >
+                                          {laneStudents.length > 0 ? (
+                                            <div className="flex flex-col gap-1 h-full">
+                                              {laneStudents.map(a => {
+                                                const apply = applyById.get(a.apply_id)
+                                                return (
+                                                  <button
+                                                    key={a.apply_id}
+                                                    onClick={() => { setActiveTab('apply'); setExpandedApplyId(a.apply_id) }}
+                                                    className="w-full flex-1 rounded-lg px-2 py-1 text-left overflow-hidden"
+                                                    style={a.is_confirmed
+                                                      ? { backgroundColor: '#DCFCE7', border: '1px solid #86EFAC' }
+                                                      : { backgroundColor: '#FFEDD5', border: '1px solid #FDBA74' }}
+                                                    title={`${apply?.student_name ?? ''}：クリックで申込一覧タブを開く`}
+                                                  >
+                                                    <div className="text-[10px] text-gray-600 whitespace-nowrap">
+                                                      {apply?.grade ?? ''}{a.subject ? ` ${SUBJECT_LABEL[a.subject] ?? a.subject}` : ''}
+                                                      {!a.is_confirmed && <span className="font-bold" style={{ color: '#C2410C' }}> 未確定</span>}
+                                                    </div>
+                                                    <div className="text-sm font-bold text-gray-800 whitespace-nowrap">{apply?.student_name ?? '不明'}</div>
+                                                  </button>
+                                                )
+                                              })}
+                                            </div>
+                                          ) : isAvail ? (
+                                            <button
+                                              onClick={() => setSelectedMapCell({ date: mapDate, slot: s.slot })}
+                                              className="w-full h-full rounded-lg flex items-center justify-center text-[11px] bg-white"
+                                              style={{ border: '1.5px dashed #d1d5db', color: '#9ca3af' }}
+                                              title="空き枠：クリックでこのコマの詳細を下に表示"
+                                            >
+                                              空き
+                                            </button>
+                                          ) : null}
+                                        </td>
+                                      )
+                                    })}
+                                  </tr>
+                                ))}
+                              </Fragment>
+                            ))}
+                            {/* 担当未定の生徒 */}
+                            <tr className="border-t-2 border-gray-200" style={{ backgroundColor: '#FEF2F2' }}>
+                              <td className="px-2 py-2 font-bold align-top" style={{ color: '#B91C1C' }}>担当未定</td>
+                              {SUMMER_SLOTS.map(s => {
+                                const c = cellMap.get(`${mapDate}_${s.slot}`)
+                                const unassignedConfirmed = (c?.students ?? []).filter(x => x.is_confirmed && !x.assigned_teacher_id)
+                                const unconfirmed = (c?.students ?? []).filter(x => !x.is_confirmed)
+                                return (
+                                  <td key={s.slot} className="p-1.5 align-top border-l border-gray-100">
+                                    {unassignedConfirmed.length === 0 && unconfirmed.length === 0 ? (
+                                      <div className="text-center text-gray-300">−</div>
+                                    ) : (
+                                      <div className="flex flex-col gap-1">
+                                        {unassignedConfirmed.map(x => {
+                                          const apply = applyById.get(x.apply_id)
+                                          return (
+                                            <button
+                                              key={x.apply_id}
+                                              onClick={() => { setActiveTab('apply'); setExpandedApplyId(x.apply_id) }}
+                                              className="w-full rounded-lg px-2 py-1 text-left text-white"
+                                              style={{ backgroundColor: '#DC2626' }}
+                                              title="確定済みなのに担当が決まっていません：クリックで申込一覧タブを開く"
+                                            >
+                                              <span className="text-xs font-bold whitespace-nowrap">{apply?.student_name ?? '不明'}</span>
+                                              {apply?.grade && <span className="text-[10px]">（{apply.grade}）</span>}
+                                            </button>
+                                          )
+                                        })}
+                                        {unconfirmed.map(x => {
+                                          const apply = applyById.get(x.apply_id)
+                                          return (
+                                            <button
+                                              key={x.apply_id}
+                                              onClick={() => { setActiveTab('apply'); setExpandedApplyId(x.apply_id) }}
+                                              className="w-full rounded-lg px-2 py-1 text-left bg-white"
+                                              style={{ border: '1px solid #e5e7eb', color: '#6b7280' }}
+                                              title="まだ確定していない申込です：クリックで申込一覧タブを開く"
+                                            >
+                                              <span className="text-xs font-semibold whitespace-nowrap">{apply?.student_name ?? '不明'}</span>
+                                              {apply?.grade && <span className="text-[10px]">（{apply.grade}）</span>}
+                                              <span className="text-[10px]"> 未確定</span>
+                                            </button>
+                                          )
+                                        })}
+                                      </div>
+                                    )}
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50 flex items-center gap-x-4 gap-y-1 flex-wrap text-[11px] text-gray-500">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#DCFCE7', border: '1px solid #86EFAC' }} />
+                          確定した生徒
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#FFEDD5', border: '1px solid #FDBA74' }} />
+                          未確定の生徒
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white" style={{ border: '1px dashed #d1d5db', color: '#9ca3af' }}>空き</span>
+                          出られるのに生徒が入っていない枠
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#F9FAFB', border: '1px solid #e5e7eb' }} />
+                          出勤希望なし
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#DC2626' }} />
+                          担当未定（確定済みで担当が空欄）
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })()
+              ) : (
+                <div className="bg-white rounded-2xl shadow overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-gray-100 bg-orange-50">
+                          <th className="px-3 py-2 text-left font-bold text-gray-600 whitespace-nowrap">日付</th>
+                          {SUMMER_SLOTS.map(s => (
+                            <th key={s.slot} className="px-2 py-2 text-center whitespace-nowrap">
+                              <div className="font-bold" style={{ color: isMainSlot(s.slot) ? ORANGE : '#9ca3af' }}>
+                                {s.label} {isMainSlot(s.slot) ? 'メイン' : '予備'}
+                              </div>
+                              <div className="text-[10px] font-normal text-gray-500">{s.start}〜{s.end}</div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {dateRows.map(({ date: ds, sepLabel }) => {
+                          const dow = dowOf(ds)
+                          const dowColor = dow === 0 ? '#ef4444' : dow === 6 ? '#3b82f6' : '#374151'
+                          return (
+                            <Fragment key={ds}>
+                              {sepLabel && (
+                                <tr>
+                                  <td colSpan={1 + SUMMER_SLOTS.length} className="px-3 py-2 text-center bg-gray-100 text-[11px] font-bold text-gray-500">
+                                    ━━ {sepLabel} ━━
+                                  </td>
+                                </tr>
+                              )}
+                              <tr>
+                                <td className="px-3 py-1.5 whitespace-nowrap tabular-nums" style={{ color: dowColor }}>
+                                  <span className="font-semibold">{fmtD(ds)}</span>
+                                  <span className="ml-0.5 text-[10px]">({'日月火水木金土'[dow]})</span>
+                                </td>
+                                {SUMMER_SLOTS.map(s => {
+                                  const c = cellMap.get(`${ds}_${s.slot}`)
+                                  const st = statusOf(c)
+                                  const style = STATUS_STYLE[st]
+                                  const demand = c?.students.length ?? 0
+                                  const confirmedN = c?.students.filter(x => x.is_confirmed).length ?? 0
+                                  const supply = c?.teachers.length ?? 0
+                                  const isSel = sel?.date === ds && sel?.slot === s.slot
+                                  const cellStudents = (c?.students ?? [])
+                                    .slice()
+                                    .sort((a, b) => (applyById.get(a.apply_id)?.student_name ?? '').localeCompare(applyById.get(b.apply_id)?.student_name ?? '', 'ja'))
+                                  const cellTeachers = c ? summerTeachers.filter(t => c.teachers.some(x => x.teacher_id === t.id)) : []
+                                  const confOf = (id: string) => c?.teachers.find(x => x.teacher_id === id)?.confirmed_count ?? 0
+                                  return (
+                                    <td key={s.slot} className="px-1 py-1 align-top">
+                                      <button
+                                        onClick={() => setSelectedMapCell(isSel ? null : { date: ds, slot: s.slot })}
+                                        className={`w-full rounded-lg leading-tight transition-transform active:scale-95 ${
+                                          mapViewMode === 'detail' ? 'min-w-[150px] px-2 py-1.5 text-left' : 'min-w-[86px] px-1.5 py-1'
+                                        }`}
+                                        style={{
+                                          backgroundColor: style.bg,
+                                          color: style.fg,
+                                          border: isSel ? `2px solid ${ORANGE}` : '2px solid transparent',
+                                        }}
+                                        title={`${fmtD(ds)} ${s.label}：クリックで詳細を表示`}
+                                      >
+                                        {mapViewMode === 'compact' ? (demand === 0 ? (
+                                          <>
+                                            <div className="font-bold">−</div>
+                                            <div className="text-[10px] tabular-nums">{supply > 0 ? `講師${supply}` : ' '}</div>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <div className="font-bold tabular-nums">生徒{demand} <span className="font-normal">確{confirmedN}</span></div>
+                                            <div className="text-[10px] tabular-nums">講師{supply}</div>
+                                          </>
+                                        )) : demand === 0 ? (
+                                          <div className="text-center">
+                                            <div className="font-bold">−</div>
+                                            <div className="text-[10px] tabular-nums">{supply > 0 ? `講師${supply}人` : ''}</div>
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <div className="space-y-0.5">
+                                              {cellStudents.map(sl => {
+                                                const apply = applyById.get(sl.apply_id)
+                                                const assignedName = sl.assigned_teacher_id ? (teacherNameById.get(sl.assigned_teacher_id) ?? '不明') : null
+                                                return (
+                                                  <div key={sl.apply_id} className="flex items-center gap-1 whitespace-nowrap">
+                                                    <span className="font-semibold text-gray-800">{apply?.student_name ?? '不明'}</span>
+                                                    {apply?.grade && <span className="text-[10px] text-gray-500">{apply.grade}</span>}
+                                                    {sl.subject && (
+                                                      <span className="text-[10px] font-bold" style={{ color: '#0369A1' }}>
+                                                        {SUBJECT_LABEL[sl.subject] ?? sl.subject}
+                                                      </span>
+                                                    )}
+                                                    {!sl.is_confirmed ? (
+                                                      <span className="text-[10px] font-bold px-1 rounded border bg-white" style={{ borderColor: '#d1d5db', color: '#6b7280' }}>
+                                                        未確定
+                                                      </span>
+                                                    ) : assignedName ? (
+                                                      <span className="text-[10px] font-bold" style={{ color: '#15803d' }}>→ {assignedName}</span>
+                                                    ) : (
+                                                      <span className="text-[10px] font-bold" style={{ color: '#B91C1C' }}>担当未定</span>
+                                                    )}
+                                                  </div>
+                                                )
+                                              })}
+                                            </div>
+                                            <div className="mt-1 pt-1 border-t border-black/10 text-[10px] text-gray-600 whitespace-nowrap">
+                                              講師：
+                                              {cellTeachers.length === 0 ? (
+                                                <span className="font-bold" style={{ color: '#B91C1C' }}>なし</span>
+                                              ) : (
+                                                cellTeachers.map((t, i) => (
+                                                  <span key={t.id}>
+                                                    {i > 0 && '・'}
+                                                    {t.name}
+                                                    {confOf(t.id) > 0 && (
+                                                      <span className="font-bold" style={{ color: confOf(t.id) === 2 ? '#1E3A8A' : '#15803d' }}>
+                                                        （確{confOf(t.id)}）
+                                                      </span>
+                                                    )}
+                                                  </span>
+                                                ))
+                                              )}
+                                            </div>
+                                          </>
+                                        )}
+                                      </button>
+                                    </td>
+                                  )
+                                })}
+                              </tr>
+                            </Fragment>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50 flex items-center gap-x-4 gap-y-1 flex-wrap text-[11px] text-gray-500">
+                    <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#DCFCE7' }} />全員確定・担当割当済み</span>
+                    <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#FEF3C7' }} />対応中（未確定・担当未定あり）</span>
+                    <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#FEE2E2' }} />申込あり・出られる講師なし</span>
+                    <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded border border-gray-200" style={{ backgroundColor: '#F9FAFB' }} />申込なし（数字は出られる講師数）</span>
+                  </div>
+                </div>
+              )}
+
+              {/* 選択セルの詳細 */}
+              {sel && selSlotInfo && (
+                <div ref={mapDetailRef} className="bg-white rounded-2xl shadow px-6 py-4">
+                  <div className="flex items-center gap-2 mb-3 flex-wrap">
+                    <span className="text-base font-bold text-gray-800 tabular-nums">
+                      {fmtD(sel.date)}（{'日月火水木金土'[dowOf(sel.date)]}） {selSlotInfo.label} {selSlotInfo.start}〜{selSlotInfo.end}
+                    </span>
+                    <span
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                      style={isMainSlotOnDate(sel.date, sel.slot)
+                        ? { backgroundColor: ORANGE, color: 'white' }
+                        : { backgroundColor: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }}
+                    >
+                      {isMainSlotOnDate(sel.date, sel.slot) ? 'メイン' : '予備'}
+                    </span>
+                    <button
+                      onClick={() => setSelectedMapCell(null)}
+                      className="ml-auto text-xs text-gray-400 hover:text-gray-600 underline"
+                    >
+                      閉じる
+                    </button>
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-x-6 gap-y-4">
+                    {/* 申込生徒 */}
+                    <div>
+                      <div className="text-xs font-bold text-gray-500 mb-1.5">
+                        申込生徒（{selCell?.students.length ?? 0}人）
+                        <span className="ml-2 font-normal text-gray-400">名前をクリックすると申込一覧タブで開きます</span>
+                      </div>
+                      {!selCell || selCell.students.length === 0 ? (
+                        <div className="text-xs text-gray-400 py-1">このコマへの申込はありません</div>
+                      ) : (
+                        <div className="divide-y divide-gray-50">
+                          {selCell.students
+                            .slice()
+                            .sort((a, b) => (applyById.get(a.apply_id)?.student_name ?? '').localeCompare(applyById.get(b.apply_id)?.student_name ?? '', 'ja'))
+                            .map(s => {
+                              const apply = applyById.get(s.apply_id)
+                              const assignedName = s.assigned_teacher_id ? (teacherNameById.get(s.assigned_teacher_id) ?? '不明') : null
+                              const assignedAvailable = !s.assigned_teacher_id || !!selCell.teachers.some(t => t.teacher_id === s.assigned_teacher_id)
+                              return (
+                                <div key={s.apply_id} className="flex items-center gap-2 py-1.5 text-xs flex-wrap">
+                                  <button
+                                    onClick={() => { setActiveTab('apply'); setExpandedApplyId(s.apply_id) }}
+                                    className="font-semibold text-gray-800 hover:underline"
+                                  >
+                                    {apply?.student_name ?? '不明'}
+                                  </button>
+                                  {apply?.grade && <span className="text-gray-500">{apply.grade}</span>}
+                                  {s.added_by_admin && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap" style={{ color: '#1d4ed8', border: '1px dashed #1d4ed8' }}>
+                                      管理者追加
+                                    </span>
+                                  )}
+                                  {s.is_confirmed ? (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded text-white whitespace-nowrap" style={{ backgroundColor: '#16A34A' }}>確定</span>
+                                  ) : (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap" style={{ borderColor: '#d1d5db', color: '#6b7280' }}>未確定</span>
+                                  )}
+                                  {s.is_confirmed && (
+                                    assignedName ? (
+                                      <span className="whitespace-nowrap" style={{ color: assignedAvailable ? '#374151' : '#B45309' }}>
+                                        担当：{assignedName} 先生{!assignedAvailable && '（この時間の出勤希望なし）'}
+                                      </span>
+                                    ) : (
+                                      <span className="font-bold whitespace-nowrap" style={{ color: '#B91C1C' }}>担当未定</span>
+                                    )
+                                  )}
+                                  {s.subject && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap" style={{ backgroundColor: '#E0F2FE', color: '#0369A1' }}>
+                                      {SUBJECT_LABEL[s.subject] ?? s.subject}
+                                    </span>
+                                  )}
+                                </div>
+                              )
+                            })}
+                        </div>
+                      )}
+                    </div>
+                    {/* 出られる講師 */}
+                    <div>
+                      <div className="text-xs font-bold text-gray-500 mb-1.5">
+                        出られる講師（{selCell?.teachers.length ?? 0}人）
+                      </div>
+                      {!selCell || selCell.teachers.length === 0 ? (
+                        <div className="text-xs text-gray-400 py-1">この時間に出られる講師はいません</div>
+                      ) : (
+                        <div className="divide-y divide-gray-50">
+                          {summerTeachers
+                            .filter(t => selCell.teachers.some(x => x.teacher_id === t.id))
+                            .map(t => {
+                              const conf = selCell.teachers.find(x => x.teacher_id === t.id)?.confirmed_count ?? 0
+                              const assignedTo = selCell.students.filter(s => s.assigned_teacher_id === t.id).length
+                              const badge = conf === 2
+                                ? { label: '確定2人（満員）', bg: '#1E3A8A' }
+                                : conf === 1
+                                  ? { label: '確定1人', bg: '#16A34A' }
+                                  : { label: '希望のみ', bg: ORANGE }
+                              return (
+                                <div key={t.id} className="flex items-center gap-2 py-1.5 text-xs flex-wrap">
+                                  <span className="font-semibold text-gray-800">{t.name} 先生</span>
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded text-white whitespace-nowrap" style={{ backgroundColor: badge.bg }}>
+                                    {badge.label}
+                                  </span>
+                                  <span className="text-gray-500 tabular-nums whitespace-nowrap">このコマの担当 {assignedTo}人</span>
+                                  {conf !== assignedTo && (conf > 0 || assignedTo > 0) && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+                                      シフト確定数と担当数が不一致
+                                    </span>
+                                  )}
+                                </div>
+                              )
+                            })}
+                        </div>
+                      )}
+                      {(() => {
+                        if (!selCell) return null
+                        const ghostIds = Array.from(new Set(
+                          selCell.students
+                            .map(s => s.assigned_teacher_id)
+                            .filter((id): id is string => !!id && !selCell.teachers.some(t => t.teacher_id === id))
+                        ))
+                        if (ghostIds.length === 0) return null
+                        return (
+                          <div className="mt-2 text-[11px] px-2.5 py-2 rounded-lg space-y-0.5" style={{ backgroundColor: '#FEF3C7', color: '#92400E' }}>
+                            {ghostIds.map(id => (
+                              <div key={id}>
+                                {teacherNameById.get(id) ?? '不明'} 先生が担当になっていますが、この時間の出勤希望（シフト）がありません
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })()}
+                    </div>
                   </div>
                 </div>
               )}
