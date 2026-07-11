@@ -113,6 +113,10 @@ const COURSE_CONSULT = '相談して決めたい'
 // 今夏は中3の充実(12回)コースは申込フォームから直接受け付けず、希望者には個別相談に誘導する
 const isCourseConsultOnly = (g: string, sessions: number) => g === '中3' && sessions === 12
 
+// コマが満席のため新規受付を停止しているコース（受講回数で指定）。空にすれば全コース受付再開
+const FULL_SESSIONS = new Set<number>([8])
+const isCourseFull = (sessions: number) => FULL_SESSIONS.has(sessions)
+
 type GroupedSlot = { date: string; dow: number; slots: number[] }
 
 function groupSelectedByDate(selected: Set<string>): GroupedSlot[] {
@@ -699,16 +703,18 @@ export default function SummerApplyPage() {
                   const name = COURSE_NAMES[opt.sessions]
                   const on = course === name
                   const consultOnly = isCourseConsultOnly(grade, opt.sessions)
+                  const full = isCourseFull(opt.sessions)
+                  const off = consultOnly || full
                   return (
                     <button
                       key={opt.sessions}
                       type="button"
-                      onClick={() => { if (!consultOnly) setCourse(name) }}
-                      disabled={consultOnly}
-                      aria-disabled={consultOnly}
+                      onClick={() => { if (!off) setCourse(name) }}
+                      disabled={off}
+                      aria-disabled={off}
                       className="flex items-center justify-between px-4 py-3 rounded-xl border-2 text-sm font-bold transition-colors active:scale-[0.98] disabled:active:scale-100 disabled:cursor-default"
                       style={
-                        consultOnly
+                        off
                           ? { backgroundColor: '#f9fafb', borderColor: '#e5e7eb', color: '#cbd5e1' }
                           : on
                           ? { backgroundColor: '#FFF7ED', borderColor: ORANGE, color: ORANGE }
@@ -717,12 +723,15 @@ export default function SummerApplyPage() {
                     >
                       <span className="flex items-baseline gap-2">
                         <span>{name}コース</span>
-                        <span className="text-[11px] font-normal" style={{ color: consultOnly ? '#cbd5e1' : '#6b7280' }}>{opt.sessions}回</span>
+                        <span className="text-[11px] font-normal" style={{ color: off ? '#cbd5e1' : '#6b7280' }}>{opt.sessions}回</span>
                         {consultOnly && (
                           <span className="text-[10px] font-normal" style={{ color: '#cbd5e1' }}>（要相談）</span>
                         )}
+                        {full && !consultOnly && (
+                          <span className="text-[10px] font-normal" style={{ color: '#9ca3af' }}>（満席）</span>
+                        )}
                       </span>
-                      <span className="tabular-nums" style={{ color: consultOnly ? '#cbd5e1' : on ? ORANGE : '#374151' }}>
+                      <span className="tabular-nums" style={{ color: off ? '#cbd5e1' : on ? ORANGE : '#374151' }}>
                         {opt.amount.toLocaleString()}円
                       </span>
                     </button>
@@ -741,6 +750,11 @@ export default function SummerApplyPage() {
                   {COURSE_CONSULT}
                 </button>
               </div>
+              {FULL_SESSIONS.size > 0 && (
+                <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+                  ※標準コースは定員に達しました。
+                </p>
+              )}
               {course && (
                 <button
                   type="button"
