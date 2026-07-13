@@ -7,8 +7,10 @@ import { supabase } from '@/lib/supabase'
 import { GROUP_SLOTS, SUMMER_PERIOD } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
+// 日本時間の今日を返す。toISOString() は UTC 基準のため、
+// 深夜0時〜朝9時に送信すると前日の日付で登録されてしまう（給与集計がズレる）
 function today() {
-  return new Date().toISOString().split('T')[0]
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
 }
 
 function formatDateLabel(d: string) {

@@ -1234,7 +1234,7 @@ export default function AdminPage() {
                   <p className="font-bold text-gray-800 text-base">{s.name}</p>
                   <div className="mt-1.5 text-xs text-gray-500 space-y-0.5">
                     <p>個別 {s.individualPeriods}コマ　集団①② {s.groupPeriodsEarly}コマ</p>
-                    <p>集団③以降 {s.groupPeriodsLate}コマ　勤務 {s.workingDays}日</p>
+                    <p>集団③以降 {s.groupPeriodsLate}コマ　<span className="font-bold" style={{ color: '#CC5500' }}>勤務 {s.workingDays}日</span></p>
                     {s.extraMinutes > 0 && <p>追加業務 {fmtMin(s.extraMinutes)}</p>}
                   </div>
                 </button>
@@ -1259,7 +1259,7 @@ export default function AdminPage() {
                         <span>個別指導　<span className="font-bold text-gray-800">{selectedTeacher.individualPeriods}</span>コマ</span>
                         <span>集団①②　<span className="font-bold text-gray-800">{selectedTeacher.groupPeriodsEarly}</span>コマ</span>
                         <span>集団③以降　<span className="font-bold text-gray-800">{selectedTeacher.groupPeriodsLate}</span>コマ</span>
-                        <span>勤務日数　<span className="font-bold text-gray-800">{selectedTeacher.workingDays}</span>日</span>
+                        <span>勤務日数　<span className="text-lg font-bold" style={{ color: '#CC5500' }}>{selectedTeacher.workingDays}</span><span className="font-bold" style={{ color: '#CC5500' }}>日</span></span>
                         <span>追加業務　<span className="font-bold text-gray-800">{fmtMin(selectedTeacher.extraMinutes)}</span></span>
                       </div>
                     </div>
@@ -1414,7 +1414,9 @@ export default function AdminPage() {
                         </tbody>
                         <tfoot>
                           <tr className="border-t-2 border-gray-300 bg-orange-50">
-                            <td className="px-5 py-3 text-sm font-bold text-gray-700">月合計</td>
+                            <td className="px-5 py-3 text-sm font-bold text-gray-700">
+                              月合計（<span style={{ color: '#CC5500' }}>勤務 {selectedTeacher.workingDays}日</span>）
+                            </td>
                             <td className="px-4 py-3 text-sm font-bold text-gray-800">
                               個別 {selectedTeacher.individualPeriods}コマ
                             </td>
