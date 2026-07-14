@@ -114,7 +114,7 @@ const COURSE_CONSULT = '相談して決めたい'
 const isCourseConsultOnly = (g: string, sessions: number) => g === '中3' && sessions === 12
 
 // コマが満席のため新規受付を停止しているコース（受講回数で指定）。空にすれば全コース受付再開
-const FULL_SESSIONS = new Set<number>([])
+const FULL_SESSIONS = new Set<number>([8])
 const isCourseFull = (sessions: number) => FULL_SESSIONS.has(sessions)
 
 type GroupedSlot = { date: string; dow: number; slots: number[] }
