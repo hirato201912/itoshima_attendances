@@ -140,7 +140,7 @@ function groupSelectedByDate(selected: Set<string>): GroupedSlot[] {
 export default function SummerApplyPage() {
   const [studentName, setStudentName] = useState('')
   const [grade, setGrade] = useState<ApplyGrade | ''>('')
-  const [course, setCourse] = useState<string>('') // '必修' | '標準' | '充実' | '相談して決めたい' | ''
+  const [course, setCourse] = useState<string>('') // '必修コース' | '標準コース' | '充実コース' | '相談して決めたい' | ''
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [notes, setNotes] = useState('')
   const [confirming, setConfirming] = useState(false)
@@ -188,6 +188,10 @@ export default function SummerApplyPage() {
     }
     if (!grade) {
       setError('学年を選んでください')
+      return
+    }
+    if (!course) {
+      setError('希望コースを選んでください（お決まりでない場合は「相談して決めたい」をお選びください）')
       return
     }
     if (selected.size === 0) {
@@ -308,7 +312,7 @@ export default function SummerApplyPage() {
             <div className="px-4 py-3">
               <div className="text-xs text-gray-500 mb-1">希望コース</div>
               {course ? (
-                <div className="text-base font-bold" style={{ color: ORANGE }}>{course}{course !== COURSE_CONSULT ? 'コース' : ''}</div>
+                <div className="text-base font-bold" style={{ color: ORANGE }}>{course}</div>
               ) : (
                 <div className="text-sm text-gray-400">（未選択：塾からご提案します）</div>
               )}
@@ -574,7 +578,8 @@ export default function SummerApplyPage() {
             <div className="rounded-xl px-3 py-2.5 text-[13px] leading-relaxed bg-white border border-amber-200">
               <span className="font-bold text-gray-800">候補日はできるだけたくさんお選びください。</span>
               <span className="block font-normal text-xs mt-1 text-gray-600">
-                候補が多いほどお席のご用意がしやすくなり、ご希望に沿った日程をご提案できる可能性が高まります。
+                <span className="font-bold" style={{ color: '#B45309' }}>夏期講習が近づき、お席が埋まりつつあります。</span>
+                候補が多いほど、ご希望に沿った日程でお席を確保しやすくなります。
               </span>
             </div>
           </div>
@@ -687,7 +692,7 @@ export default function SummerApplyPage() {
         <section className="bg-white rounded-2xl shadow-sm px-4 py-4">
           <label className="block text-sm font-bold text-gray-800 mb-2">
             希望コース
-            <span className="ml-2 text-xs font-normal text-gray-400">任意</span>
+            <span className="ml-2 text-xs font-normal" style={{ color: ORANGE }}>必須</span>
           </label>
           {!grade ? (
             <p className="text-xs text-gray-500">
@@ -722,7 +727,7 @@ export default function SummerApplyPage() {
                       }
                     >
                       <span className="flex items-baseline gap-2">
-                        <span>{name}コース</span>
+                        <span>{name}</span>
                         <span className="text-[11px] font-normal" style={{ color: off ? '#cbd5e1' : '#6b7280' }}>{opt.sessions}回</span>
                         {consultOnly && (
                           <span className="text-[10px] font-normal" style={{ color: '#cbd5e1' }}>（要相談）</span>
