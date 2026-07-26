@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { GROUP_SLOTS, SUMMER_PERIOD } from '@/types'
+import { GROUP_SLOTS, SUMMER_PERIOD, PREP_MINUTES_PER_DAY, prepMinutesForDay } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
 // 日本時間の今日を返す。toISOString() は UTC 基準のため、
@@ -154,6 +154,8 @@ export default function AttendancePage() {
   const submittedGroup = todayRecords.find((r) => r.lesson_type === '集団授業')
   const totalExtra = todayRecords.reduce((sum, r) => sum + (r.extra_minutes ?? 0), 0)
   const totalPeriods = todayRecords.reduce((sum, r) => sum + r.periods, 0)
+  // 個別指導が1コマ以上あれば準備時間を自動付与（送信後の表示用）
+  const submittedPrep = prepMinutesForDay(todayRecords)
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -292,6 +294,16 @@ export default function AttendancePage() {
                 </div>
               )}
 
+              {submittedPrep > 0 && (
+                <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                  <span className="text-gray-700">
+                    準備時間
+                    <span className="ml-2 text-xs text-gray-400">自動付与</span>
+                  </span>
+                  <span className="font-bold text-gray-600">{submittedPrep} 分</span>
+                </div>
+              )}
+
               <div className="flex justify-between items-center pt-1">
                 <span className="text-sm font-medium text-gray-500">合計</span>
                 <span className="text-xl font-bold" style={{ color: '#FF7F00' }}>
@@ -357,7 +369,12 @@ export default function AttendancePage() {
                     </button>
                   ))}
                 </div>
-                <p className="text-xs text-gray-400 mt-1.5 text-right">コマ</p>
+                <div className="flex items-start justify-between gap-3 mt-1.5">
+                  <p className="text-xs text-gray-400">
+                    1コマ以上の日は準備時間{PREP_MINUTES_PER_DAY}分が自動で加算されます
+                  </p>
+                  <p className="text-xs text-gray-400 shrink-0">コマ</p>
+                </div>
               </div>
 
               {/* 集団授業 */}
@@ -461,6 +478,9 @@ export default function AttendancePage() {
               )}
 
               {extra > 0 && <ConfirmRow label="追加業務時間" value={`${extra} 分`} />}
+              {hasIndividual && (
+                <ConfirmRow label="準備時間" value={`${PREP_MINUTES_PER_DAY} 分（自動付与）`} />
+              )}
 
               <div className="rounded-xl px-4 py-3 flex justify-between items-center mt-1" style={{ backgroundColor: '#FFF5E6' }}>
                 <span className="text-sm font-medium text-gray-600">合計コマ数</span>

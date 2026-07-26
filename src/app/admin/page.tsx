@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, SUMMER_PERIOD, SUMMER_APPLY_PERIOD, isMainSlotOnDate } from '@/types'
+import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, SUMMER_PERIOD, SUMMER_APPLY_PERIOD, isMainSlotOnDate, PREP_MINUTES_PER_DAY, prepMinutesForDay, prepMinutesTotal } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
 const MAIN_SLOTS = new Set<number>([2, 3])
@@ -60,6 +60,8 @@ type TeacherSummary = {
   groupPeriodsEarly: number
   groupPeriodsLate: number
   extraMinutes: number
+  // 準備時間（自動付与）：個別指導が1コマ以上あった日 × PREP_MINUTES_PER_DAY
+  prepMinutes: number
   workingDays: number
   records: Attendance[]
 }
@@ -580,6 +582,7 @@ export default function AdminPage() {
         individualPeriods: tr.filter(r => r.lesson_type === '個別指導').reduce((s, r) => s + r.periods, 0),
         groupPeriodsEarly, groupPeriodsLate,
         extraMinutes: tr.reduce((s, r) => s + (r.extra_minutes ?? 0), 0),
+        prepMinutes: prepMinutesTotal(tr),
         workingDays: new Set(tr.map(r => r.date)).size,
         records: tr.sort((a, b) => a.date.localeCompare(b.date)),
       }
@@ -688,8 +691,8 @@ export default function AdminPage() {
 
   // 今月の全講師レコードを CSV ダウンロード（画面表示と同じ：1行=1日分）
   const downloadMonthCsv = () => {
-    const headers = ['講師コード', '講師名', '日付', '個別指導', '集団授業', '追加業務']
-    type Row = { code: number; name: string; date: string; individual: string; group: string; extra: string }
+    const headers = ['講師コード', '講師名', '日付', '個別指導', '集団授業', '追加業務', '準備時間', '業務時間計']
+    type Row = { code: number; name: string; date: string; individual: string; group: string; extra: string; prep: string; workTotal: string }
     const rows: Row[] = []
     for (const t of summaries) {
       // 日付ごとに個別・集団をまとめる
@@ -702,6 +705,7 @@ export default function AdminPage() {
       }
       for (const [date, day] of dateMap) {
         const totalExtra = (day.individual?.extra_minutes ?? 0) + (day.group?.extra_minutes ?? 0)
+        const prep = prepMinutesForDay([day.individual, day.group].filter((r): r is Attendance => !!r))
         rows.push({
           code: t.code,
           name: t.name,
@@ -709,12 +713,14 @@ export default function AdminPage() {
           individual: day.individual ? `${day.individual.periods}コマ` : '−',
           group: day.group?.notes ? day.group.notes : '−',
           extra: totalExtra > 0 ? fmtMin(totalExtra) : '−',
+          prep: prep > 0 ? fmtMin(prep) : '−',
+          workTotal: totalExtra + prep > 0 ? fmtMin(totalExtra + prep) : '−',
         })
       }
     }
     rows.sort((a, b) => a.code - b.code || a.date.localeCompare(b.date))
     const escape = (s: string) => /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-    const body = rows.map(r => [String(r.code), r.name, formatDate(r.date), r.individual, r.group, r.extra])
+    const body = rows.map(r => [String(r.code), r.name, formatDate(r.date), r.individual, r.group, r.extra, r.prep, r.workTotal])
     const csv = [headers, ...body].map(row => row.map(escape).join(',')).join('\r\n')
     // Excel が UTF-8 として正しく開けるよう BOM を先頭に付与
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
@@ -1212,6 +1218,11 @@ export default function AdminPage() {
           />
         </div>
 
+        {/* 準備時間の付与ルール */}
+        <p className="text-sm text-gray-500 px-1 -mt-1">
+          準備時間：個別指導が1コマ以上あった日に、授業前後の準備として1日{PREP_MINUTES_PER_DAY}分を自動付与しています（勤怠記録から自動計算。個別指導がない日は付与されません）。
+        </p>
+
         {/* 講師別ビュー：左リスト＋右詳細 */}
         {viewMode === 'teacher' && (
         <div className="flex gap-5 items-start">
@@ -1235,7 +1246,9 @@ export default function AdminPage() {
                   <div className="mt-1.5 text-xs text-gray-500 space-y-0.5">
                     <p>個別 {s.individualPeriods}コマ　集団①② {s.groupPeriodsEarly}コマ</p>
                     <p>集団③以降 {s.groupPeriodsLate}コマ　<span className="font-bold" style={{ color: '#CC5500' }}>勤務 {s.workingDays}日</span></p>
-                    {s.extraMinutes > 0 && <p>追加業務 {fmtMin(s.extraMinutes)}</p>}
+                    {(s.extraMinutes > 0 || s.prepMinutes > 0) && (
+                      <p>追加業務 {fmtMin(s.extraMinutes)}　準備 {fmtMin(s.prepMinutes)}</p>
+                    )}
                   </div>
                 </button>
               ))
@@ -1261,6 +1274,14 @@ export default function AdminPage() {
                         <span>集団③以降　<span className="font-bold text-gray-800">{selectedTeacher.groupPeriodsLate}</span>コマ</span>
                         <span>勤務日数　<span className="text-lg font-bold" style={{ color: '#CC5500' }}>{selectedTeacher.workingDays}</span><span className="font-bold" style={{ color: '#CC5500' }}>日</span></span>
                         <span>追加業務　<span className="font-bold text-gray-800">{fmtMin(selectedTeacher.extraMinutes)}</span></span>
+                        <span>準備時間　<span className="font-bold text-gray-800">{fmtMin(selectedTeacher.prepMinutes)}</span></span>
+                        <span className="col-span-2">
+                          業務時間 計
+                          <span className="text-lg font-bold" style={{ color: '#CC5500' }}>
+                            {fmtMin(selectedTeacher.extraMinutes + selectedTeacher.prepMinutes)}
+                          </span>
+                          <span className="text-xs text-gray-400 ml-2">給与明細の時給③に入力する時間</span>
+                        </span>
                       </div>
                     </div>
                     <button
@@ -1334,6 +1355,10 @@ export default function AdminPage() {
                             <th className="text-left px-4 py-3 text-sm font-bold text-gray-600">個別指導</th>
                             <th className="text-left px-4 py-3 text-sm font-bold text-gray-600">集団授業</th>
                             <th className="text-center px-4 py-3 text-sm font-bold text-gray-600">追加業務</th>
+                            <th className="text-center px-4 py-3 text-sm font-bold text-gray-600">
+                              準備時間
+                              <span className="block text-[10px] font-normal text-gray-400">自動付与</span>
+                            </th>
                             <th className="px-4 py-3"></th>
                           </tr>
                         </thead>
@@ -1341,6 +1366,7 @@ export default function AdminPage() {
                           {days.map(day => {
                             const isEditing = edit?.originalDate === day.date
                             const totalExtra = (day.individual?.extra_minutes ?? 0) + (day.group?.extra_minutes ?? 0)
+                            const dayPrep = prepMinutesForDay([day.individual, day.group].filter((r): r is Attendance => !!r))
                             const isDeleting = (day.individual && deletingId === day.individual.id) || (day.group && deletingId === day.group.id)
                             return (
                               <tr
@@ -1378,6 +1404,9 @@ export default function AdminPage() {
                                 </td>
                                 <td className="px-4 py-3 text-center text-sm text-gray-600">
                                   {totalExtra > 0 ? fmtMin(totalExtra) : '−'}
+                                </td>
+                                <td className="px-4 py-3 text-center text-sm text-gray-600">
+                                  {dayPrep > 0 ? fmtMin(dayPrep) : '−'}
                                 </td>
                                 <td className="px-4 py-3 text-right whitespace-nowrap">
                                   <button
@@ -1425,6 +1454,18 @@ export default function AdminPage() {
                             </td>
                             <td className="px-4 py-3 text-center text-sm font-bold text-gray-800">
                               {selectedTeacher.extraMinutes > 0 ? fmtMin(selectedTeacher.extraMinutes) : '−'}
+                            </td>
+                            <td className="px-4 py-3 text-center text-sm font-bold text-gray-800">
+                              {selectedTeacher.prepMinutes > 0 ? fmtMin(selectedTeacher.prepMinutes) : '−'}
+                            </td>
+                            <td></td>
+                          </tr>
+                          <tr className="border-t border-gray-200 bg-orange-50">
+                            <td colSpan={3} className="px-5 py-2.5 text-sm font-bold text-gray-700">
+                              業務時間 合計（追加業務＋準備時間）
+                            </td>
+                            <td colSpan={2} className="px-4 py-2.5 text-center text-sm font-bold" style={{ color: '#CC5500' }}>
+                              {fmtMin(selectedTeacher.extraMinutes + selectedTeacher.prepMinutes)}
                             </td>
                             <td></td>
                           </tr>
@@ -1543,6 +1584,11 @@ export default function AdminPage() {
             const totalPeriods = dayRecords.reduce((s, r) => s + r.periods, 0)
             const totalExtra = dayRecords.reduce((s, r) => s + (r.extra_minutes ?? 0), 0)
             const teacherCount = new Set(dayRecords.map(r => r.teacher.id)).size
+            // 準備時間は「講師×日」単位。この日に個別指導1コマ以上あった講師の人数ぶん付与される
+            const prepTeacherIds = new Set(
+              dayRecords.filter(r => r.lesson_type === '個別指導' && r.periods > 0).map(r => r.teacher.id)
+            )
+            const totalPrep = prepTeacherIds.size * PREP_MINUTES_PER_DAY
             return (
               <div className="bg-white rounded-2xl shadow overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4 bg-orange-50">
@@ -1570,6 +1616,10 @@ export default function AdminPage() {
                         <th className="text-left px-4 py-3 text-sm font-bold text-gray-600">内容</th>
                         <th className="text-center px-4 py-3 text-sm font-bold text-gray-600">コマ数</th>
                         <th className="text-center px-4 py-3 text-sm font-bold text-gray-600">追加業務</th>
+                        <th className="text-center px-4 py-3 text-sm font-bold text-gray-600">
+                          準備時間
+                          <span className="block text-[10px] font-normal text-gray-400">自動付与</span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
@@ -1598,6 +1648,9 @@ export default function AdminPage() {
                             <td className="px-4 py-4 text-center text-base text-gray-600">
                               {(rec.extra_minutes ?? 0) > 0 ? fmtMin(rec.extra_minutes ?? 0) : '−'}
                             </td>
+                            <td className="px-4 py-4 text-center text-base text-gray-600">
+                              {prepMinutesForDay([rec]) > 0 ? fmtMin(PREP_MINUTES_PER_DAY) : '−'}
+                            </td>
                           </tr>
                         )
                       })}
@@ -1608,6 +1661,9 @@ export default function AdminPage() {
                         <td className="px-4 py-3 text-center text-sm font-bold text-gray-800">{totalPeriods}コマ</td>
                         <td className="px-4 py-3 text-center text-sm font-bold text-gray-800">
                           {totalExtra > 0 ? fmtMin(totalExtra) : '−'}
+                        </td>
+                        <td className="px-4 py-3 text-center text-sm font-bold text-gray-800">
+                          {totalPrep > 0 ? fmtMin(totalPrep) : '−'}
                         </td>
                       </tr>
                     </tfoot>

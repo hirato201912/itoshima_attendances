@@ -26,6 +26,33 @@ export type LoggedInTeacher = {
   is_admin: boolean
 }
 
+// ===== 授業準備時間（自動付与） =====
+// 授業前後の準備として、個別指導が1コマ以上あった日に 1日 PREP_MINUTES_PER_DAY 分を付与する。
+// DBには保存せず、勤怠レコードから毎回計算する（＝過去の記録にも遡って反映され、
+// 管理画面でコマ数を修正しても自動で計算し直される）。
+export const PREP_MINUTES_PER_DAY = 10
+
+type PrepSource = { date: string; lesson_type: string; periods: number }
+
+// 付与条件：その日に「個別指導」で1コマ以上の記録があること
+function qualifiesForPrep(r: Pick<PrepSource, 'lesson_type' | 'periods'>): boolean {
+  return r.lesson_type === '個別指導' && r.periods > 0
+}
+
+// 1日分のレコード（個別＋集団）から、その日に付与される準備時間（分）を返す
+export function prepMinutesForDay(
+  dayRecords: Pick<PrepSource, 'lesson_type' | 'periods'>[]
+): number {
+  return dayRecords.some(qualifiesForPrep) ? PREP_MINUTES_PER_DAY : 0
+}
+
+// 複数日ぶんのレコードから、準備時間の合計（分）を返す。
+// 1日に複数レコード（個別＋集団）があっても、その日の付与は1回だけ。
+export function prepMinutesTotal(records: PrepSource[]): number {
+  const days = new Set(records.filter(qualifiesForPrep).map((r) => r.date))
+  return days.size * PREP_MINUTES_PER_DAY
+}
+
 export const GROUP_SLOTS = [
   { label: '①', start: '17:05', end: '18:05' },
   { label: '②', start: '18:10', end: '18:55' },

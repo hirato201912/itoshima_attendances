@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { prepMinutesForDay, prepMinutesTotal } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
 const EARLY_SLOTS = ['①', '②']
@@ -74,6 +75,9 @@ export default function HistoryPage() {
   // 集計
   const totalPeriods = attendances.reduce((s, a) => s + a.periods, 0)
   const totalExtra = attendances.reduce((s, a) => s + (a.extra_minutes ?? 0), 0)
+  // 準備時間：個別指導が1コマ以上あった日 × 10分（自動付与）
+  const totalPrep = prepMinutesTotal(attendances)
+  const totalWorkMinutes = totalExtra + totalPrep
   const workingDays = sortedDates.length
   const individualPeriods = attendances
     .filter((a) => a.lesson_type === '個別指導')
@@ -151,9 +155,12 @@ export default function HistoryPage() {
                 </p>
               </div>
               <div>
-                <p className="text-xs text-gray-400 mb-0.5">追加業務時間</p>
+                <p className="text-xs text-gray-400 mb-0.5">追加業務・準備時間</p>
                 <p className="text-2xl font-bold text-gray-800">
-                  {totalExtra}<span className="text-sm font-normal text-gray-500 ml-1">分</span>
+                  {totalWorkMinutes}<span className="text-sm font-normal text-gray-500 ml-1">分</span>
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  追加業務 {totalExtra}分／準備 {totalPrep}分
                 </p>
               </div>
               <div>
@@ -185,6 +192,7 @@ export default function HistoryPage() {
               const dayRecords = grouped[date]
               const dayTotal = dayRecords.reduce((s, a) => s + a.periods, 0)
               const dayExtra = dayRecords.reduce((s, a) => s + (a.extra_minutes ?? 0), 0)
+              const dayPrep = prepMinutesForDay(dayRecords)
 
               return (
                 <div key={date} className="bg-white rounded-2xl shadow-sm overflow-hidden">
@@ -242,10 +250,15 @@ export default function HistoryPage() {
                     })}
                   </div>
 
-                  {/* その日の追加業務時間（合計） */}
-                  {dayExtra > 0 && (
-                    <div className="px-4 py-2 border-t border-gray-100">
-                      <p className="text-xs text-gray-400">追加業務時間 合計 {dayExtra}分</p>
+                  {/* その日の追加業務時間・準備時間 */}
+                  {(dayExtra > 0 || dayPrep > 0) && (
+                    <div className="px-4 py-2 border-t border-gray-100 flex flex-wrap gap-x-3 gap-y-0.5">
+                      {dayExtra > 0 && (
+                        <p className="text-xs text-gray-400">追加業務時間 合計 {dayExtra}分</p>
+                      )}
+                      {dayPrep > 0 && (
+                        <p className="text-xs text-gray-400">準備時間 {dayPrep}分（自動付与）</p>
+                      )}
                     </div>
                   )}
                 </div>
