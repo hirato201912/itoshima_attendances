@@ -19,6 +19,15 @@ function formatDateLabel(d: string) {
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日（${day}）`
 }
 
+// 夏期講習のシフト提出バナーは一旦非表示。再開するときは true に戻す
+const SHOW_SUMMER_BANNER: boolean = false
+
+// 授業前後の準備時間（業務給）についてのお知らせ。この日付まで表示する
+const PREP_NOTICE_END = '2026-08-31'
+
+// 画面上部に常時表示する合言葉
+const WELCOME_PHRASE = '「よく来たね」で迎えて、「よくがんばったね」で送り出す。'
+
 type Step = 'form' | 'confirm'
 
 export default function AttendancePage() {
@@ -36,6 +45,7 @@ export default function AttendancePage() {
   const [error, setError] = useState('')
   const [showInstallBanner, setShowInstallBanner] = useState(false)
   const [showSummerBanner, setShowSummerBanner] = useState(false)
+  const [showPrepNotice, setShowPrepNotice] = useState(false)
 
   useEffect(() => {
     const saved = localStorage.getItem('juku_teacher')
@@ -52,7 +62,8 @@ export default function AttendancePage() {
 
     // 夏期講習バナー：期間終了まで表示
     const todayDate = today()
-    setShowSummerBanner(todayDate <= SUMMER_PERIOD.end)
+    setShowSummerBanner(SHOW_SUMMER_BANNER && todayDate <= SUMMER_PERIOD.end)
+    setShowPrepNotice(todayDate <= PREP_NOTICE_END)
 
     // 本日送信済みか確認
     supabase
@@ -191,6 +202,15 @@ export default function AttendancePage() {
         </div>
       </header>
 
+      <div className="bg-white border-b border-orange-100">
+        <p
+          className="max-w-lg mx-auto px-4 py-2.5 text-center text-sm font-bold leading-snug"
+          style={{ color: '#CC5500' }}
+        >
+          {WELCOME_PHRASE}
+        </p>
+      </div>
+
       <main className="max-w-lg mx-auto px-4 py-6">
 
         {showSummerBanner && (
@@ -217,6 +237,27 @@ export default function AttendancePage() {
               <div className="shrink-0 text-2xl font-bold">›</div>
             </div>
           </Link>
+        )}
+
+        {showPrepNotice && (
+          <div className="mb-4 bg-white rounded-2xl border border-orange-200 overflow-hidden">
+            <div className="px-4 py-2.5" style={{ backgroundColor: '#FFF0E0' }}>
+              <p className="text-xs font-bold" style={{ color: '#CC5500' }}>
+                お知らせ
+              </p>
+              <p className="text-base font-bold text-gray-800 leading-snug mt-0.5">
+                8月から、授業の前後に業務給{PREP_MINUTES_PER_DAY}分が自動で付きます
+              </p>
+            </div>
+            <div className="px-4 py-3 flex flex-col gap-2">
+              <p className="text-xs text-gray-500">
+                個別指導が1コマ以上ある日は、申請しなくても1日{PREP_MINUTES_PER_DAY}分が加算されます。
+              </p>
+              <p className="text-sm font-bold text-gray-800">
+                授業の5分前には勤務できるよう、準備を整えておいてください。
+              </p>
+            </div>
+          </div>
         )}
 
         {showInstallBanner && (
