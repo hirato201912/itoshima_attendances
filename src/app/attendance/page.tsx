@@ -240,23 +240,16 @@ export default function AttendancePage() {
         )}
 
         {showPrepNotice && (
-          <div className="mb-4 bg-white rounded-2xl border border-orange-200 overflow-hidden">
-            <div className="px-4 py-2.5" style={{ backgroundColor: '#FFF0E0' }}>
-              <p className="text-xs font-bold" style={{ color: '#CC5500' }}>
-                お知らせ
-              </p>
-              <p className="text-base font-bold text-gray-800 leading-snug mt-0.5">
-                8月から、授業の前後に業務給{PREP_MINUTES_PER_DAY}分が自動で付きます
-              </p>
-            </div>
-            <div className="px-4 py-3 flex flex-col gap-2">
-              <p className="text-xs text-gray-500">
-                個別指導が1コマ以上ある日は、申請しなくても1日{PREP_MINUTES_PER_DAY}分が加算されます。
-              </p>
-              <p className="text-sm font-bold text-gray-800">
-                授業の5分前には勤務できるよう、準備を整えておいてください。
-              </p>
-            </div>
+          <div className="mb-4 bg-white rounded-2xl border border-orange-200 px-4 py-3.5">
+            <p className="text-xs font-bold" style={{ color: '#CC5500' }}>
+              お知らせ
+            </p>
+            <p className="text-base font-bold text-gray-800 leading-snug mt-1">
+              8月から、授業の前後に業務給{PREP_MINUTES_PER_DAY}分が自動で付きます
+            </p>
+            <p className="text-sm text-gray-600 leading-snug mt-1.5">
+              授業の5分前には勤務できるよう、準備を整えておいてください。
+            </p>
           </div>
         )}
 
