@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, SUMMER_PERIOD, SUMMER_APPLY_PERIOD, isMainSlotOnDate, PREP_MINUTES_PER_DAY, prepMinutesForDay, prepMinutesTotal } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
+import TeachersTab from './TeachersTab'
 
 const MAIN_SLOTS = new Set<number>([2, 3])
 const isMainSlot = (slot: number) => MAIN_SLOTS.has(slot)
@@ -295,7 +296,7 @@ type ShiftRow = {
 export default function AdminPage() {
   const router = useRouter()
   const [teacher, setTeacher] = useState<LoggedInTeacher | null>(null)
-  const [activeTab, setActiveTab] = useState<'attendance' | 'shift' | 'summer' | 'apply' | 'map'>('attendance')
+  const [activeTab, setActiveTab] = useState<'attendance' | 'shift' | 'summer' | 'apply' | 'map' | 'teachers'>('attendance')
 
   // 勤怠タブ
   const [selectedMonth, setSelectedMonth] = useState(currentMonth)
@@ -1147,12 +1148,13 @@ export default function AdminPage() {
       {/* タブバー */}
       <div className="border-b border-gray-200 bg-white">
         <div className="max-w-screen-xl mx-auto px-6 flex gap-1 pt-2">
-          {(['attendance', 'shift', 'summer', 'apply', 'map'] as const).map((tab) => {
+          {(['attendance', 'shift', 'summer', 'apply', 'map', 'teachers'] as const).map((tab) => {
             const label = tab === 'attendance' ? '勤怠管理'
               : tab === 'shift' ? '空き時間帯'
               : tab === 'summer' ? '夏期講習'
               : tab === 'apply' ? '申込一覧'
-              : '割当マップ'
+              : tab === 'map' ? '割当マップ'
+              : '講師登録'
             return (
               <button
                 key={tab}
@@ -2530,6 +2532,8 @@ export default function AdminPage() {
         })()}
 
         {/* ===== 割当マップタブ（日付×コマで申込と講師の状況を俯瞰） ===== */}
+        {activeTab === 'teachers' && <TeachersTab />}
+
         {activeTab === 'map' && (() => {
           const teacherNameById = new Map<string, string>()
           for (const t of summerTeachers) teacherNameById.set(t.id, t.name)
