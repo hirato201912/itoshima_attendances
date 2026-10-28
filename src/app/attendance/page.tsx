@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { GROUP_SLOTS, SUMMER_PERIOD, PREP_MINUTES_PER_DAY, prepMinutesForDay } from '@/types'
+import { GROUP_SLOTS, WINTER_PERIOD, PREP_MINUTES_PER_DAY, prepMinutesForDay } from '@/types'
 import type { Attendance, LoggedInTeacher } from '@/types'
 
 // 日本時間の今日を返す。toISOString() は UTC 基準のため、
@@ -18,9 +18,6 @@ function formatDateLabel(d: string) {
   const day = '日月火水木金土'[date.getDay()]
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日（${day}）`
 }
-
-// 夏期講習のシフト提出バナーは一旦非表示。再開するときは true に戻す
-const SHOW_SUMMER_BANNER: boolean = false
 
 // 授業前後の準備時間（業務給）についてのお知らせ。この日付まで表示する
 const PREP_NOTICE_END = '2026-08-31'
@@ -44,7 +41,7 @@ export default function AttendancePage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showInstallBanner, setShowInstallBanner] = useState(false)
-  const [showSummerBanner, setShowSummerBanner] = useState(false)
+  const [showWinterBanner, setShowWinterBanner] = useState(false)
   const [showPrepNotice, setShowPrepNotice] = useState(false)
 
   useEffect(() => {
@@ -60,9 +57,9 @@ export default function AttendancePage() {
     const dismissed = localStorage.getItem('juku_install_banner_dismissed') === '1'
     setShowInstallBanner(!isStandalone && !dismissed)
 
-    // 夏期講習バナー：期間終了まで表示
+    // 冬期講習バナー：提出締切日まで表示
     const todayDate = today()
-    setShowSummerBanner(SHOW_SUMMER_BANNER && todayDate <= SUMMER_PERIOD.end)
+    setShowWinterBanner(todayDate <= WINTER_PERIOD.deadline)
     setShowPrepNotice(todayDate <= PREP_NOTICE_END)
 
     // 本日送信済みか確認
@@ -187,8 +184,8 @@ export default function AttendancePage() {
           <Link href="/shift" className="text-white/90 text-sm underline underline-offset-2">
             空き時間登録
           </Link>
-          <Link href="/summer" className="text-white/90 text-sm underline underline-offset-2">
-            夏期講習
+          <Link href="/winter" className="text-white/90 text-sm underline underline-offset-2">
+            冬期講習
           </Link>
           <Link href="/history" className="text-white/90 text-sm underline underline-offset-2">
             勤怠履歴
@@ -213,22 +210,25 @@ export default function AttendancePage() {
 
       <main className="max-w-lg mx-auto px-4 py-6">
 
-        {showSummerBanner && (
+        {showWinterBanner && (
           <Link
-            href="/summer"
+            href="/winter"
             className="mb-4 block rounded-2xl p-4 shadow-md text-white transition-transform active:scale-[0.98]"
             style={{ background: 'linear-gradient(135deg, #FF7F00 0%, #FF9933 100%)' }}
           >
             <div className="flex items-center justify-between gap-3">
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-white/80 mb-0.5">夏期講習シフトのお知らせ</p>
+                <p className="text-xs font-bold text-white/80 mb-0.5">冬期講習シフトのお知らせ</p>
                 <p className="text-base font-bold leading-snug">
-                  出られる日・時間帯を提出してください
+                  {(() => {
+                    const d = new Date(WINTER_PERIOD.deadline + 'T00:00:00')
+                    return `${d.getMonth() + 1}/${d.getDate()}（${'日月火水木金土'[d.getDay()]}）までに出られる日・時間帯を提出してください`
+                  })()}
                 </p>
                 <p className="text-xs text-white/85 mt-1">
                   {(() => {
-                    const s = new Date(SUMMER_PERIOD.start + 'T00:00:00')
-                    const e = new Date(SUMMER_PERIOD.end + 'T00:00:00')
+                    const s = new Date(WINTER_PERIOD.start + 'T00:00:00')
+                    const e = new Date(WINTER_PERIOD.end + 'T00:00:00')
                     const dow = '日月火水木金土'
                     return `${s.getMonth() + 1}/${s.getDate()}（${dow[s.getDay()]}）〜 ${e.getMonth() + 1}/${e.getDate()}（${dow[e.getDay()]}）の希望を入力 ›`
                   })()}

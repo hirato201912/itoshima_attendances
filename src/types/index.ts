@@ -84,14 +84,36 @@ export const SUMMER_SLOTS = [
   { slot: 5, label: '⑤', start: '19:55', end: '21:30' },
 ] as const
 
+// 季節講習（夏期・冬期）の講師シフト提出期間の型
+export type SeasonPeriod = {
+  start: string
+  end: string
+  includeWeekends: boolean
+  deadline?: string
+  closedRanges: ReadonlyArray<{ start: string; end: string; label: string }>
+}
+
 // 夏期講習：期間定義（講師シフト＆管理画面用）
 // 7月分は夏期講習に収まりきれなかった分の通常授業調整等で活用するため、提出・閲覧対象に含める
 export const SUMMER_PERIOD = {
   start: '2026-07-21',
   end: '2026-08-28',
+  includeWeekends: false,
   closedRanges: [
     { start: '2026-07-29', end: '2026-07-31', label: '休校日' },
     { start: '2026-08-08', end: '2026-08-16', label: 'お盆休み' },
+  ],
+} as const
+
+// 冬期講習：期間定義（講師シフト用）。時間帯は SUMMER_SLOTS と共通、土日も提出対象
+// シフト保存先は夏期講習と同じ juku_summer_availability（日付範囲で区別する）
+export const WINTER_PERIOD = {
+  start: '2026-12-24',
+  end: '2027-01-07',
+  includeWeekends: true,
+  deadline: '2026-11-10',
+  closedRanges: [
+    { start: '2026-12-31', end: '2027-01-03', label: '年末年始休み' },
   ],
 } as const
 
@@ -111,8 +133,16 @@ export const RESERVE_ONLY_DATES: ReadonlyArray<string> = [
   '2026-08-04',
 ]
 
+// 下記の日付はメインの時間帯を個別に指定する
+export const MAIN_SLOTS_BY_DATE: Readonly<Record<string, ReadonlyArray<number>>> = {
+  '2026-12-29': [2, 3, 4, 5],
+  '2026-12-30': [2, 3, 4, 5],
+}
+
 export function isMainSlotOnDate(date: string, slot: number): boolean {
   if (RESERVE_ONLY_DATES.includes(date)) return false
+  const override = MAIN_SLOTS_BY_DATE[date]
+  if (override) return override.includes(slot)
   return slot === 2 || slot === 3
 }
 
