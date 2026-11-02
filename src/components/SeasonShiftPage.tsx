@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { SUMMER_SLOTS } from '@/types'
+import { seasonSlots } from '@/types'
 import type { SeasonPeriod } from '@/types'
 import type { LoggedInTeacher } from '@/types'
 
@@ -64,6 +64,7 @@ type Props = {
 }
 
 export default function SeasonShiftPage({ seasonName, channelKey, period }: Props) {
+  const slots = seasonSlots(period)
   const router = useRouter()
   const [teacher, setTeacher] = useState<LoggedInTeacher | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -162,7 +163,7 @@ export default function SeasonShiftPage({ seasonName, channelKey, period }: Prop
   const setRowAll = async (date: string, on: boolean) => {
     if (!teacher || saving) return
     // 確定済みのコマは触らない
-    const editableSlots = SUMMER_SLOTS.filter(s => !confirmed.has(`${date}_${s.slot}`))
+    const editableSlots = slots.filter(s => !confirmed.has(`${date}_${s.slot}`))
     if (editableSlots.length === 0) {
       showToast('この日のコマはすべて確定済みです')
       return
@@ -201,7 +202,7 @@ export default function SeasonShiftPage({ seasonName, channelKey, period }: Prop
       const inserts: { teacher_id: string; date: string; slot: number }[] = []
       for (const r of rows) {
         if (r.type !== 'date') continue
-        for (const s of SUMMER_SLOTS) {
+        for (const s of slots) {
           const key = `${r.date}_${s.slot}`
           next.add(key)
           if (!confirmed.has(key)) {
@@ -279,7 +280,7 @@ export default function SeasonShiftPage({ seasonName, channelKey, period }: Prop
   }
 
   const rows = buildRows(period)
-  const totalCells = rows.filter(r => r.type === 'date').length * SUMMER_SLOTS.length
+  const totalCells = rows.filter(r => r.type === 'date').length * slots.length
   const selectedCount = selected.size
 
   return (
@@ -365,7 +366,7 @@ export default function SeasonShiftPage({ seasonName, channelKey, period }: Prop
 
         {/* 時間帯凡例 */}
         <div className="bg-white rounded-2xl shadow-sm px-4 py-3 mb-3 text-xs text-gray-600 grid grid-cols-2 gap-x-3 gap-y-1">
-          {SUMMER_SLOTS.map(s => (
+          {slots.map(s => (
             <span key={s.slot} className="flex items-center gap-1.5 tabular-nums">
               <span className="font-bold" style={{ color: ORANGE }}>{s.label}</span>
               {s.start}〜{s.end}
@@ -400,7 +401,7 @@ export default function SeasonShiftPage({ seasonName, channelKey, period }: Prop
           {/* ヘッダー行 */}
           <div className="flex items-center border-b border-gray-100 bg-orange-50 px-2 py-2 text-xs font-bold text-gray-600">
             <div className="w-14 shrink-0">日付</div>
-            {SUMMER_SLOTS.map(s => (
+            {slots.map(s => (
               <div key={s.slot} className="flex-1 text-center" style={{ color: ORANGE }}>
                 {s.label}
               </div>
@@ -430,7 +431,7 @@ export default function SeasonShiftPage({ seasonName, channelKey, period }: Prop
                 const dateLabel = `${month}/${dayNum}`
                 const dowColor = dow === 0 ? '#ef4444' : dow === 6 ? '#3b82f6' : '#374151'
                 const rowBg = dow === 0 ? '#FFFAFA' : dow === 6 ? '#F8FAFF' : undefined
-                const rowAllOn = SUMMER_SLOTS.every(s => has(row.date, s.slot))
+                const rowAllOn = slots.every(s => has(row.date, s.slot))
                 return (
                   <div
                     key={row.date}
@@ -441,7 +442,7 @@ export default function SeasonShiftPage({ seasonName, channelKey, period }: Prop
                       <span className="font-semibold">{dateLabel}</span>
                       <span className="ml-0.5 text-xs">({dayLabel})</span>
                     </div>
-                    {SUMMER_SLOTS.map(s => {
+                    {slots.map(s => {
                       const on = has(row.date, s.slot)
                       const conf = isConfirmed(row.date, s.slot)
                       return (

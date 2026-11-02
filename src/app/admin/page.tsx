@@ -4,8 +4,8 @@ import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, SUMMER_PERIOD, SUMMER_APPLY_PERIOD, isMainSlotOnDate, PREP_MINUTES_PER_DAY, prepMinutesForDay, prepMinutesTotal } from '@/types'
-import type { Attendance, LoggedInTeacher } from '@/types'
+import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, SUMMER_PERIOD, WINTER_PERIOD, SUMMER_APPLY_PERIOD, seasonSlots, isMainSlotOnDate, PREP_MINUTES_PER_DAY, prepMinutesForDay, prepMinutesTotal } from '@/types'
+import type { Attendance, LoggedInTeacher, SeasonPeriod } from '@/types'
 import TeachersTab from './TeachersTab'
 
 const MAIN_SLOTS = new Set<number>([2, 3])
@@ -45,6 +45,13 @@ const SUBJECT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
 const SUBJECT_LABEL: Record<string, string> = Object.fromEntries(SUBJECT_OPTIONS.map(o => [o.value, o.label]))
 
 const ORANGE = '#FF7F00'
+
+// 講習シフトタブで切り替える季節講習。シフトはどちらも juku_summer_availability に日付範囲で保存
+const SHIFT_SEASONS = {
+  winter: { name: '冬期講習', period: WINTER_PERIOD as SeasonPeriod },
+  summer: { name: '夏期講習', period: SUMMER_PERIOD as SeasonPeriod },
+} as const
+type ShiftSeason = keyof typeof SHIFT_SEASONS
 
 const LESSON_COLORS: Record<string, { dot: string; bg: string; text: string }> = {
   '個別指導': { dot: '#FF7F00', bg: '#FFF0E0', text: '#CC5500' },
@@ -335,7 +342,8 @@ export default function AdminPage() {
   const [shiftRows, setShiftRows] = useState<ShiftRow[]>([])
   const [shiftLoading, setShiftLoading] = useState(false)
 
-  // 夏期講習タブ
+  // 講習シフトタブ（冬期・夏期を切り替え。summerRows は両期間分を保持）
+  const [shiftSeason, setShiftSeason] = useState<ShiftSeason>('winter')
   const [summerTeachers, setSummerTeachers] = useState<{ id: string; name: string; code: number }[]>([])
   const [summerRows, setSummerRows] = useState<{ teacher_id: string; date: string; slot: number; confirmed_count: number }[]>([])
   const [summerLoading, setSummerLoading] = useState(false)
@@ -443,7 +451,7 @@ export default function AdminPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teacher, shiftMonth])
 
-  // 夏期講習データ取得＋リアルタイム購読
+  // 夏期・冬期講習シフトデータ取得＋リアルタイム購読
   useEffect(() => {
     if (!teacher) return
 
@@ -459,8 +467,7 @@ export default function AdminPage() {
         supabase
           .from('juku_summer_availability')
           .select('teacher_id, date, slot, confirmed_count')
-          .gte('date', SUMMER_PERIOD.start)
-          .lte('date', SUMMER_PERIOD.end),
+          .or(`and(date.gte.${SUMMER_PERIOD.start},date.lte.${SUMMER_PERIOD.end}),and(date.gte.${WINTER_PERIOD.start},date.lte.${WINTER_PERIOD.end})`),
       ])
       setSummerTeachers(teachers ?? [])
       setSummerRows((rows ?? []) as { teacher_id: string; date: string; slot: number; confirmed_count: number }[])
@@ -921,11 +928,12 @@ export default function AdminPage() {
     setDeletingApplyId(null)
   }
 
-  // 講師1人分の夏期講習シフトをCSVダウンロード（紙配布用）
+  // 講師1人分の講習シフト（選択中の季節）をCSVダウンロード（紙配布用）
   const downloadSingleSummerCsv = (teacherInfo: { id: string; name: string; code: number }) => {
     const headers = ['講師', '日付', '曜日', 'コマ', '時間帯', '状態']
+    const { period } = SHIFT_SEASONS[shiftSeason]
     const rows = summerRows
-      .filter(r => r.teacher_id === teacherInfo.id)
+      .filter(r => r.teacher_id === teacherInfo.id && r.date >= period.start && r.date <= period.end)
       .slice()
       .sort((a, b) => a.date.localeCompare(b.date) || a.slot - b.slot)
     const slotInfoMap: Record<number, { label: string; start: string; end: string }> = {}
@@ -955,7 +963,7 @@ export default function AdminPage() {
     const a = document.createElement('a')
     a.href = url
     const safeName = teacherInfo.name.replace(/[\\/:*?"<>|]/g, '_')
-    a.download = `juku-summer-shift-${safeName}-${todayStr()}.csv`
+    a.download = `juku-${shiftSeason}-shift-${safeName}-${todayStr()}.csv`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -1151,7 +1159,7 @@ export default function AdminPage() {
           {(['attendance', 'shift', 'summer', 'apply', 'map', 'teachers'] as const).map((tab) => {
             const label = tab === 'attendance' ? '勤怠管理'
               : tab === 'shift' ? '空き時間帯'
-              : tab === 'summer' ? '夏期講習'
+              : tab === 'summer' ? SHIFT_SEASONS[shiftSeason].name
               : tab === 'apply' ? '申込一覧'
               : tab === 'map' ? '割当マップ'
               : '講師登録'
@@ -1796,47 +1804,52 @@ export default function AdminPage() {
 
         {/* ===== 夏期講習タブ ===== */}
         {activeTab === 'summer' && (() => {
-          // 夏期講習期間中の日付一覧（休校日除く）を作成
+          const season = SHIFT_SEASONS[shiftSeason]
+          const period = season.period
+          // 選択中の講習期間の日付一覧（休校日除く）を作成
           const dates: string[] = []
-          const start = new Date(SUMMER_PERIOD.start + 'T00:00:00')
-          const end = new Date(SUMMER_PERIOD.end + 'T00:00:00')
+          const start = new Date(period.start + 'T00:00:00')
+          const end = new Date(period.end + 'T00:00:00')
           for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
             const dow = d.getDay()
-            if (dow === 0 || dow === 6) continue
+            if (!period.includeWeekends && (dow === 0 || dow === 6)) continue
             const y = d.getFullYear()
             const m = String(d.getMonth() + 1).padStart(2, '0')
             const day = String(d.getDate()).padStart(2, '0')
             const ds = `${y}-${m}-${day}`
-            const isClosed = SUMMER_PERIOD.closedRanges.some(r => ds >= r.start && ds <= r.end)
+            const isClosed = period.closedRanges.some(r => ds >= r.start && ds <= r.end)
             if (!isClosed) dates.push(ds)
           }
 
+          const seasonRows = summerRows.filter(r => r.date >= period.start && r.date <= period.end)
+
           // 講師ごと・日付ごとの提出スロット数を集計
           const countMap = new Map<string, number>() // key: `${teacher_id}_${date}`
-          for (const r of summerRows) {
+          for (const r of seasonRows) {
             const k = `${r.teacher_id}_${r.date}`
             countMap.set(k, (countMap.get(k) ?? 0) + 1)
           }
 
           // 講師ごとの提出セル合計
           const totalByTeacher = new Map<string, number>()
-          for (const r of summerRows) {
+          for (const r of seasonRows) {
             totalByTeacher.set(r.teacher_id, (totalByTeacher.get(r.teacher_id) ?? 0) + 1)
           }
-          const totalPossible = dates.length * SUMMER_SLOTS.length
+          const periodSlots = seasonSlots(period)
+          const totalPossible = dates.length * periodSlots.length
 
           // 講師×日付×スロットの詳細マップ
-          const cellSet = new Set(summerRows.map(r => `${r.teacher_id}_${r.date}_${r.slot}`))
+          const cellSet = new Set(seasonRows.map(r => `${r.teacher_id}_${r.date}_${r.slot}`))
           // 確定状況：0=希望のみ / 1=1人 / 2=2人
           const confirmedCountMap = new Map<string, number>()
-          for (const r of summerRows) {
+          for (const r of seasonRows) {
             if (r.confirmed_count > 0) {
               confirmedCountMap.set(`${r.teacher_id}_${r.date}_${r.slot}`, r.confirmed_count)
             }
           }
           // 講師ごとの確定セル数（1人・2人の内訳）
           const confirmedByTeacher = new Map<string, { ones: number; twos: number }>()
-          for (const r of summerRows) {
+          for (const r of seasonRows) {
             if (r.confirmed_count > 0) {
               const cur = confirmedByTeacher.get(r.teacher_id) ?? { ones: 0, twos: 0 }
               if (r.confirmed_count === 2) cur.twos += 1
@@ -1856,12 +1869,31 @@ export default function AdminPage() {
             <>
               <div className="bg-white rounded-2xl shadow px-6 py-4">
                 <div className="flex items-baseline gap-3 flex-wrap">
-                  <span className="text-base font-bold text-gray-800">夏期講習シフト希望</span>
+                  <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden self-center">
+                    {(Object.keys(SHIFT_SEASONS) as ShiftSeason[]).map(key => (
+                      <button
+                        key={key}
+                        onClick={() => { setShiftSeason(key); setExpandedSummerTeacher(null) }}
+                        className="px-3 py-1 text-xs font-bold"
+                        style={shiftSeason === key
+                          ? { backgroundColor: ORANGE, color: 'white' }
+                          : { backgroundColor: 'white', color: '#6b7280' }}
+                      >
+                        {SHIFT_SEASONS[key].name}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-base font-bold text-gray-800">{season.name}シフト希望</span>
                   <span className="text-sm text-gray-500">
-                    期間：{formatDateShort(SUMMER_PERIOD.start)} 〜 {formatDateShort(SUMMER_PERIOD.end)}
-                    （対象 {dates.length} 日 × 5コマ = {totalPossible} セル）
+                    期間：{formatDateShort(period.start)} 〜 {formatDateShort(period.end)}
+                    （対象 {dates.length} 日 × {periodSlots.length}コマ ={totalPossible} セル）
                   </span>
-                  {SUMMER_PERIOD.closedRanges.map((r) => (
+                  {period.deadline && (
+                    <span className="text-sm font-bold text-gray-700">
+                      提出締切：{formatDateShort(period.deadline)}
+                    </span>
+                  )}
+                  {period.closedRanges.map((r) => (
                     <span key={r.start} className="text-xs text-gray-400">
                       {r.label}：{formatDateShort(r.start)}〜{formatDateShort(r.end)} は休校
                     </span>
@@ -1996,7 +2028,7 @@ export default function AdminPage() {
                                           </tr>
                                         </thead>
                                         <tbody>
-                                          {SUMMER_SLOTS.map(s => (
+                                          {periodSlots.map(s => (
                                             <tr key={s.slot}>
                                               <td className="px-2 py-1 font-bold whitespace-nowrap" style={{ color: ORANGE }}>
                                                 {s.label}　<span className="text-gray-500 font-normal">{s.start}〜{s.end}</span>
@@ -2044,7 +2076,7 @@ export default function AdminPage() {
                   <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50 flex items-center gap-x-4 gap-y-1 flex-wrap text-[11px] text-gray-500">
                     <span className="inline-flex items-center gap-2">
                       <span className="font-bold">提出数：</span>
-                      <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#DCFCE7' }} />4〜5コマ</span>
+                      <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#DCFCE7' }} />4コマ以上</span>
                       <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#FEF3C7' }} />2〜3コマ</span>
                       <span className="inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: '#FEE2E2' }} />1コマ</span>
                       <span className="inline-flex items-center gap-1"><span className="text-gray-400">−</span>未提出</span>

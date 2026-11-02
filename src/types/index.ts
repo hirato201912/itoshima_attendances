@@ -91,6 +91,12 @@ export type SeasonPeriod = {
   includeWeekends: boolean
   deadline?: string
   closedRanges: ReadonlyArray<{ start: string; end: string; label: string }>
+  // 使う時間帯（省略時は SUMMER_SLOTS の全5コマ）
+  slots?: ReadonlyArray<number>
+}
+
+export function seasonSlots(period: SeasonPeriod) {
+  return SUMMER_SLOTS.filter(s => !period.slots || period.slots.includes(s.slot))
 }
 
 // 夏期講習：期間定義（講師シフト＆管理画面用）
@@ -105,14 +111,16 @@ export const SUMMER_PERIOD = {
   ],
 } as const
 
-// 冬期講習：期間定義（講師シフト用）。時間帯は SUMMER_SLOTS と共通、土日も提出対象
+// 冬期講習：期間定義（講師シフト用）。時間帯は②〜⑤（①は夏期で使わなかったため除外）、土日も提出対象
 // シフト保存先は夏期講習と同じ juku_summer_availability（日付範囲で区別する）
 export const WINTER_PERIOD = {
   start: '2026-12-24',
   end: '2027-01-07',
   includeWeekends: true,
   deadline: '2026-11-10',
+  slots: [2, 3, 4, 5],
   closedRanges: [
+    { start: '2026-12-26', end: '2026-12-27', label: '休校日' },
     { start: '2026-12-31', end: '2027-01-03', label: '年末年始休み' },
   ],
 } as const
