@@ -4,8 +4,8 @@ import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, SUMMER_PERIOD, WINTER_PERIOD, SUMMER_APPLY_PERIOD, seasonSlots, isMainSlotOnDate, PREP_MINUTES_PER_DAY, prepMinutesForDay, prepMinutesTotal } from '@/types'
-import type { Attendance, LoggedInTeacher, SeasonPeriod } from '@/types'
+import { GROUP_SLOTS, SHIFT_SLOTS, SUMMER_SLOTS, WINTER_SPECIAL_COURSE, WINTER_SPECIAL_TOPICS, SUMMER_PERIOD, WINTER_PERIOD, SUMMER_APPLY_PERIOD, WINTER_APPLY_PERIOD, applyDates, seasonSlots, isMainSlotOnDate, PREP_MINUTES_PER_DAY, prepMinutesForDay, prepMinutesTotal } from '@/types'
+import type { Attendance, LoggedInTeacher, SeasonPeriod, ApplyPeriod } from '@/types'
 import TeachersTab from './TeachersTab'
 
 const MAIN_SLOTS = new Set<number>([2, 3])
@@ -13,6 +13,9 @@ const isMainSlot = (slot: number) => MAIN_SLOTS.has(slot)
 
 type SummerApplyRow = {
   id: string
+  season: string
+  // 冬期講習の中3特別講座で選んだ時間帯
+  special_slots: number[] | null
   student_name: string
   grade: string | null
   course: string | null
@@ -46,10 +49,22 @@ const SUBJECT_LABEL: Record<string, string> = Object.fromEntries(SUBJECT_OPTIONS
 
 const ORANGE = '#FF7F00'
 
-// 講習シフトタブで切り替える季節講習。シフトはどちらも juku_summer_availability に日付範囲で保存
+// 中3特別講座（冬期）の講座名。例：国語（作文）
+const specialTopicName = (n: number) => {
+  const t = WINTER_SPECIAL_TOPICS[n]
+  return t ? `${t.subject}（${t.theme}）` : `${n}`
+}
+// 申込ごとの選択を「国語・英語」のように表示
+const specialLabel = (slots: number[] | null) =>
+  slots && slots.length > 0
+    ? slots.map(n => WINTER_SPECIAL_TOPICS[n]?.subject ?? `${n}`).join('・')
+    : ''
+
+// 講習シフト・申込一覧・割当マップで切り替える季節講習。
+// シフトはどちらも juku_summer_availability に日付範囲で、申込は juku_summer_apply に season 列で区別して保存
 const SHIFT_SEASONS = {
-  winter: { name: '冬期講習', period: WINTER_PERIOD as SeasonPeriod },
-  summer: { name: '夏期講習', period: SUMMER_PERIOD as SeasonPeriod },
+  winter: { name: '冬期講習', period: WINTER_PERIOD as SeasonPeriod, applyPeriod: WINTER_APPLY_PERIOD as ApplyPeriod },
+  summer: { name: '夏期講習', period: SUMMER_PERIOD as SeasonPeriod, applyPeriod: SUMMER_APPLY_PERIOD as ApplyPeriod },
 } as const
 type ShiftSeason = keyof typeof SHIFT_SEASONS
 
@@ -351,8 +366,8 @@ export default function AdminPage() {
   const [togglingConfirmKey, setTogglingConfirmKey] = useState<string | null>(null)
 
   // 申込一覧タブ（保護者からの夏期講習申込）
-  const [applyRows, setApplyRows] = useState<SummerApplyRow[]>([])
-  const [applySlots, setApplySlots] = useState<SummerApplySlotRow[]>([])
+  const [allApplyRows, setApplyRows] = useState<SummerApplyRow[]>([])
+  const [allApplySlots, setApplySlots] = useState<SummerApplySlotRow[]>([])
   const [applyLoading, setApplyLoading] = useState(false)
   const [expandedApplyId, setExpandedApplyId] = useState<string | null>(null)
   const [deletingApplyId, setDeletingApplyId] = useState<string | null>(null)
@@ -371,9 +386,48 @@ export default function AdminPage() {
   // 割当マップタブ：選択中の日付×コマ／表示軸（teacher=講師別1日ボード・slot=コマ別）／表示モード（detail=セル内に名前まで表示）
   const [selectedMapCell, setSelectedMapCell] = useState<{ date: string; slot: number } | null>(null)
   const [mapAxis, setMapAxis] = useState<'teacher' | 'slot'>('teacher')
-  const [mapDate, setMapDate] = useState<string>(SUMMER_APPLY_PERIOD.start)
+  const [mapDate, setMapDate] = useState<string>(() => applyDates(SHIFT_SEASONS.winter.applyPeriod)[0])
   const [mapViewMode, setMapViewMode] = useState<'detail' | 'compact'>('detail')
   const mapDetailRef = useRef<HTMLDivElement>(null)
+
+  // 選択中の季節の申込だけを扱う（申込一覧・割当マップ）
+  const applyPeriod = SHIFT_SEASONS[shiftSeason].applyPeriod
+  const applySlotList = useMemo(
+    () => SUMMER_SLOTS.filter(s => applyPeriod.slots.includes(s.slot)),
+    [applyPeriod]
+  )
+  const applyRows = useMemo(
+    () => allApplyRows.filter(r => (r.season ?? 'summer') === shiftSeason),
+    [allApplyRows, shiftSeason]
+  )
+  const applySlots = useMemo(() => {
+    const ids = new Set(applyRows.map(r => r.id))
+    return allApplySlots.filter(s => ids.has(s.apply_id))
+  }, [allApplySlots, applyRows])
+
+  const changeSeason = (key: ShiftSeason) => {
+    setShiftSeason(key)
+    setExpandedSummerTeacher(null)
+    setExpandedApplyId(null)
+    setSelectedMapCell(null)
+    setMapDate(applyDates(SHIFT_SEASONS[key].applyPeriod)[0])
+  }
+  const seasonToggle = (
+    <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden self-center">
+      {(Object.keys(SHIFT_SEASONS) as ShiftSeason[]).map(key => (
+        <button
+          key={key}
+          onClick={() => changeSeason(key)}
+          className="px-3 py-1 text-xs font-bold"
+          style={shiftSeason === key
+            ? { backgroundColor: ORANGE, color: 'white' }
+            : { backgroundColor: 'white', color: '#6b7280' }}
+        >
+          {SHIFT_SEASONS[key].name}
+        </button>
+      ))}
+    </div>
+  )
 
   useEffect(() => {
     if (selectedMapCell && mapDetailRef.current) {
@@ -503,7 +557,7 @@ export default function AdminPage() {
       const [{ data: applies }, { data: slots }] = await Promise.all([
         supabase
           .from('juku_summer_apply')
-          .select('id, student_name, grade, course, notes, created_at, is_completed, completed_at')
+          .select('id, season, special_slots, student_name, grade, course, notes, created_at, is_completed, completed_at')
           .order('created_at', { ascending: false }),
         supabase
           .from('juku_summer_apply_slots')
@@ -814,24 +868,8 @@ export default function AdminPage() {
       .eq('slot', slot)
   }
 
-  // 申込フォームと同じ仕様の有効日付一覧（土日・お盆休みを除外）
-  const summerApplyDates = useMemo(() => {
-    const out: string[] = []
-    const start = new Date(SUMMER_APPLY_PERIOD.start + 'T00:00:00')
-    const end = new Date(SUMMER_APPLY_PERIOD.end + 'T00:00:00')
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const dow = d.getDay()
-      if (dow === 0 || dow === 6) continue
-      const y = d.getFullYear()
-      const m = String(d.getMonth() + 1).padStart(2, '0')
-      const day = String(d.getDate()).padStart(2, '0')
-      const ds = `${y}-${m}-${day}`
-      const inClosed = SUMMER_APPLY_PERIOD.closedRanges.find(r => ds >= r.start && ds <= r.end)
-      if (inClosed) continue
-      out.push(ds)
-    }
-    return out
-  }, [])
+  // 申込フォームと同じ仕様の有効日付一覧（選択中の季節。土日・休校区間を除外）
+  const summerApplyDates = useMemo(() => applyDates(applyPeriod), [applyPeriod])
 
   // 管理者追加：1コマを追加（保護者と合意済みの前提で運用）
   const addAdminApplySlot = async (applyId: string, date: string, slot: number) => {
@@ -892,10 +930,11 @@ export default function AdminPage() {
     if (bulkDeleteConfirmText !== '削除します') return
     if (applyRows.length === 0) return
     setBulkDeletingApply(true)
-    // 全件削除：created_at は必ず存在するためフィルタとして利用
-    await supabase.from('juku_summer_apply').delete().gte('created_at', '1900-01-01')
-    setApplyRows([])
-    setApplySlots([])
+    // 全件削除：選択中の季節の申込だけを消す（もう一方の季節の申込は残す）
+    const ids = new Set(applyRows.map(r => r.id))
+    await supabase.from('juku_summer_apply').delete().eq('season', shiftSeason)
+    setApplyRows(prev => prev.filter(r => !ids.has(r.id)))
+    setApplySlots(prev => prev.filter(sl => !ids.has(sl.apply_id)))
     setExpandedApplyId(null)
     setCsvDownloadedThisSession(false)
     setBulkDeletingApply(false)
@@ -972,7 +1011,7 @@ export default function AdminPage() {
 
   // 申込1件分のCSVダウンロード（紙配布用：日付ごとに1行）
   const downloadSingleApplyCsv = (apply: SummerApplyRow) => {
-    const headers = ['お子さんの名前', '学年', '希望コース', '申込日時', '日付', '曜日', 'コマ', '時間帯', 'メイン/予備', '状態', '追加元', '担当講師', '科目', '要望']
+    const headers = ['お子さんの名前', '学年', '希望コース', '中3特別講座', '申込日時', '日付', '曜日', 'コマ', '時間帯', 'メイン/予備', '状態', '追加元', '担当講師', '科目', '要望']
     const teacherNameById = new Map<string, string>()
     for (const t of summerTeachers) teacherNameById.set(t.id, t.name)
     const fmtDateTime = (iso: string) => {
@@ -996,7 +1035,7 @@ export default function AdminPage() {
     const courseText = apply.course ?? ''
     const body: string[][] = []
     if (slots.length === 0) {
-      body.push([apply.student_name, apply.grade ?? '', courseText, createdAt, '', '', '', '', '', '', '', '', '', notesText])
+      body.push([apply.student_name, apply.grade ?? '', courseText, specialLabel(apply.special_slots), createdAt, '', '', '', '', '', '', '', '', '', notesText])
     } else {
       slots.forEach((s, idx) => {
         const [, mm, dd] = s.date.split('-').map(Number)
@@ -1010,6 +1049,7 @@ export default function AdminPage() {
           idx === 0 ? apply.student_name : '',
           idx === 0 ? (apply.grade ?? '') : '',
           idx === 0 ? courseText : '',
+          idx === 0 ? specialLabel(apply.special_slots) : '',
           idx === 0 ? createdAt : '',
           `${mm}/${dd}`,
           dow,
@@ -1031,7 +1071,7 @@ export default function AdminPage() {
     const a = document.createElement('a')
     a.href = url
     const safeName = apply.student_name.replace(/[\\/:*?"<>|]/g, '_')
-    a.download = `juku-summer-apply-${safeName}-${todayStr()}.csv`
+    a.download = `juku-${shiftSeason}-apply-${safeName}-${todayStr()}.csv`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -1041,7 +1081,7 @@ export default function AdminPage() {
   // 申込一覧をCSVダウンロード
   const downloadApplyCsv = () => {
     const headers = [
-      '申込日時', 'お子さんの名前', '学年', '希望コース',
+      '申込日時', 'お子さんの名前', '学年', '希望コース', '中3特別講座',
       'メインコマ数', '予備コマ数', '合計コマ数', '確定コマ数', '担当未割当コマ数', '科目未指定コマ数', '管理者追加コマ数',
       '希望コマ一覧', '担当割当一覧', '科目割当一覧', '要望',
     ]
@@ -1096,6 +1136,7 @@ export default function AdminPage() {
         r.student_name,
         r.grade ?? '',
         r.course ?? '',
+        specialLabel(r.special_slots),
         String(mainCount),
         String(reserveCount),
         String(slots.length),
@@ -1116,7 +1157,7 @@ export default function AdminPage() {
     const a = document.createElement('a')
     a.href = url
     const today = todayStr()
-    a.download = `juku-summer-apply-${today}.csv`
+    a.download = `juku-${shiftSeason}-apply-${today}.csv`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -1869,20 +1910,7 @@ export default function AdminPage() {
             <>
               <div className="bg-white rounded-2xl shadow px-6 py-4">
                 <div className="flex items-baseline gap-3 flex-wrap">
-                  <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden self-center">
-                    {(Object.keys(SHIFT_SEASONS) as ShiftSeason[]).map(key => (
-                      <button
-                        key={key}
-                        onClick={() => { setShiftSeason(key); setExpandedSummerTeacher(null) }}
-                        className="px-3 py-1 text-xs font-bold"
-                        style={shiftSeason === key
-                          ? { backgroundColor: ORANGE, color: 'white' }
-                          : { backgroundColor: 'white', color: '#6b7280' }}
-                      >
-                        {SHIFT_SEASONS[key].name}
-                      </button>
-                    ))}
-                  </div>
+                  {seasonToggle}
                   <span className="text-base font-bold text-gray-800">{season.name}シフト希望</span>
                   <span className="text-sm text-gray-500">
                     期間：{formatDateShort(period.start)} 〜 {formatDateShort(period.end)}
@@ -2113,12 +2141,19 @@ export default function AdminPage() {
           const totalSlots = applySlots.length
           const totalMain = applySlots.filter(s => isMainSlotOnDate(s.date, s.slot)).length
           const totalReserve = totalSlots - totalMain
+          // 中3特別講座（冬期）の講座ごとの受講者
+          const specialStudents = new Map<number, string[]>()
+          for (const r of applyRows) {
+            for (const n of r.special_slots ?? []) specialStudents.set(n, [...(specialStudents.get(n) ?? []), r.student_name])
+          }
+          const [, spM, spD] = WINTER_SPECIAL_COURSE.date.split('-').map(Number)
 
           return (
             <>
               <div className="bg-white rounded-2xl shadow px-6 py-4">
                 <div className="flex items-baseline gap-3 flex-wrap">
-                  <span className="text-base font-bold text-gray-800">夏期講習 お申込み一覧</span>
+                  {seasonToggle}
+                  <span className="text-base font-bold text-gray-800">{SHIFT_SEASONS[shiftSeason].name} お申込み一覧</span>
                   <span className="text-sm text-gray-500">
                     申込件数：<span className="font-bold text-gray-700">{applyRows.length}</span> 件
                     （希望コマ計 メイン {totalMain} / 予備 {totalReserve}）
@@ -2147,6 +2182,31 @@ export default function AdminPage() {
                   保護者が申込フォームから送信すると自動で反映されます。
                   次シーズンの受付前は「CSVダウンロード」で保管 → 「全件削除」で空にしてください。
                 </div>
+                {shiftSeason === 'winter' && (
+                  <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">
+                    <div className="text-sm font-bold text-gray-800 mb-2">中3特別講座（{spM}/{spD}）の受講者</div>
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      {WINTER_SPECIAL_COURSE.slots.map(n => {
+                        const names = specialStudents.get(n) ?? []
+                        const info = SUMMER_SLOTS.find(x => x.slot === n)
+                        return (
+                          <div key={n} className="rounded-lg bg-white border border-orange-100 px-3 py-2">
+                            <div className="text-xs text-gray-500">
+                              {info?.label} {info?.start}〜{info?.end}
+                            </div>
+                            <div className="text-sm font-bold text-gray-800">
+                              {specialTopicName(n)}
+                              <span className="ml-2 tabular-nums" style={{ color: ORANGE }}>{names.length}人</span>
+                            </div>
+                            <div className="text-sm text-gray-700 mt-1 leading-relaxed">
+                              {names.length > 0 ? names.join('、') : <span className="text-gray-400">まだいません</span>}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
                 {applyRows.length > 0 && !csvDownloadedThisSession && (
                   <div className="mt-2 text-xs px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
                     全件削除するには、先に「CSVダウンロード」を押してデータを保存してください。
@@ -2210,6 +2270,11 @@ export default function AdminPage() {
                                     </span>
                                   ) : (
                                     <span className="text-gray-300 text-xs">−</span>
+                                  )}
+                                  {specialLabel(r.special_slots) && (
+                                    <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>
+                                      特別講座 {specialLabel(r.special_slots)}
+                                    </span>
                                   )}
                                 </td>
                                 <td className="px-3 py-2.5 text-center font-bold tabular-nums whitespace-nowrap"
@@ -2322,7 +2387,7 @@ export default function AdminPage() {
                                             </div>
                                             <div className="space-y-1.5">
                                               {confirmedSlots.map(s => {
-                                                const info = SUMMER_SLOTS.find(x => x.slot === s.slot)!
+                                                const info = applySlotList.find(x => x.slot === s.slot)!
                                                 const [, mm, dd] = s.date.split('-').map(Number)
                                                 const dow = '日月火水木金土'[new Date(s.date + 'T00:00:00').getDay()]
                                                 const main = isMainSlotOnDate(s.date, s.slot)
@@ -2379,7 +2444,7 @@ export default function AdminPage() {
                                       ) : (
                                         <div className="overflow-x-auto">
                                           <div className="text-xs font-bold text-gray-600 mb-2">
-                                            希望の日・時間帯（メイン={SUMMER_SLOTS.filter(s=>isMainSlot(s.slot)).map(s=>s.label).join('・')}）
+                                            希望の日・時間帯（メイン={applySlotList.filter(s=>isMainSlot(s.slot)).map(s=>s.label).join('・')}）
                                             <span className="ml-2 font-normal text-gray-500">― ✓をクリックすると緑の「確定」に切替（もう一度押すと希望に戻る）／<span className="text-blue-700 font-bold">青の点線枠</span>は管理者追加コマ</span>
                                           </div>
                                           <table className="text-xs">
@@ -2399,7 +2464,7 @@ export default function AdminPage() {
                                               </tr>
                                             </thead>
                                             <tbody>
-                                              {SUMMER_SLOTS.map(s => {
+                                              {applySlotList.map(s => {
                                                 const main = isMainSlot(s.slot)
                                                 return (
                                                   <tr key={s.slot}>
@@ -2484,7 +2549,7 @@ export default function AdminPage() {
                                                 disabled={addingAdminSlot}
                                               >
                                                 <option value="">— コマ —</option>
-                                                {SUMMER_SLOTS.map(slotInfo => (
+                                                {applySlotList.map(slotInfo => (
                                                   <option key={slotInfo.slot} value={slotInfo.slot}>
                                                     {slotInfo.label} {slotInfo.start}〜{slotInfo.end} {(adminAddDate ? isMainSlotOnDate(adminAddDate, slotInfo.slot) : isMainSlot(slotInfo.slot)) ? '(メイン)' : '(予備)'}
                                                   </option>
@@ -2509,7 +2574,7 @@ export default function AdminPage() {
                                             ) : (
                                               <div className="space-y-1">
                                                 {adminAdded.map(s => {
-                                                  const info = SUMMER_SLOTS.find(x => x.slot === s.slot)!
+                                                  const info = applySlotList.find(x => x.slot === s.slot)!
                                                   const [, mm, dd] = s.date.split('-').map(Number)
                                                   const dow = '日月火水木金土'[new Date(s.date + 'T00:00:00').getDay()]
                                                   return (
@@ -2589,14 +2654,14 @@ export default function AdminPage() {
           }
           for (const s of applySlots) cellOf(s.date, s.slot).students.push(s)
           for (const r of summerRows) {
-            if (r.date < SUMMER_APPLY_PERIOD.start || r.date > SUMMER_APPLY_PERIOD.end) continue
+            if (r.date < applyPeriod.start || r.date > applyPeriod.end) continue
             cellOf(r.date, r.slot).teachers.push({ teacher_id: r.teacher_id, confirmed_count: r.confirmed_count })
           }
 
           // 講師別ビュー用：講師×日付×コマ → 出勤希望（確定数）／割当済み生徒
           const availMap = new Map<string, number>()
           for (const r of summerRows) {
-            if (r.date < SUMMER_APPLY_PERIOD.start || r.date > SUMMER_APPLY_PERIOD.end) continue
+            if (r.date < applyPeriod.start || r.date > applyPeriod.end) continue
             availMap.set(`${r.teacher_id}_${r.date}_${r.slot}`, r.confirmed_count)
           }
           const assignedMap = new Map<string, SummerApplySlotRow[]>()
@@ -2653,7 +2718,7 @@ export default function AdminPage() {
             let sepLabel: string | undefined
             if (prevDate) {
               const p = prevDate
-              const closed = SUMMER_APPLY_PERIOD.closedRanges.find(r => r.start > p && r.end < ds)
+              const closed = applyPeriod.closedRanges.find(r => r.start > p && r.end < ds)
               if (closed) sepLabel = `${closed.label} ${fmtD(closed.start)}〜${fmtD(closed.end)}`
             }
             dateRows.push({ date: ds, sepLabel })
@@ -2662,15 +2727,16 @@ export default function AdminPage() {
 
           const sel = selectedMapCell
           const selCell = sel ? cellMap.get(`${sel.date}_${sel.slot}`) : undefined
-          const selSlotInfo = sel ? SUMMER_SLOTS.find(s => s.slot === sel.slot) : undefined
+          const selSlotInfo = sel ? applySlotList.find(s => s.slot === sel.slot) : undefined
 
           return (
             <>
               <div className="bg-white rounded-2xl shadow px-6 py-4">
                 <div className="flex items-baseline gap-3 flex-wrap">
-                  <span className="text-base font-bold text-gray-800">夏期講習 割当マップ</span>
+                  {seasonToggle}
+                  <span className="text-base font-bold text-gray-800">{SHIFT_SEASONS[shiftSeason].name} 割当マップ</span>
                   <span className="text-sm text-gray-500">
-                    期間：{fmtD(SUMMER_APPLY_PERIOD.start)} 〜 {fmtD(SUMMER_APPLY_PERIOD.end)}
+                    期間：{fmtD(applyPeriod.start)} 〜 {fmtD(applyPeriod.end)}
                   </span>
                   <span className="text-sm text-gray-600">
                     申込コマ <span className="font-bold text-gray-800 tabular-nums">{totalDemand}</span>
@@ -2732,7 +2798,7 @@ export default function AdminPage() {
                   const di = summerApplyDates.indexOf(mapDate)
                   // その日に出勤希望がある、または担当が入っている講師だけを表示
                   const dayTeachers = summerTeachers.filter(t =>
-                    SUMMER_SLOTS.some(s =>
+                    applySlotList.some(s =>
                       availMap.has(`${t.id}_${mapDate}_${s.slot}`) ||
                       (assignedMap.get(`${t.id}_${mapDate}_${s.slot}`) ?? []).length > 0
                     )
@@ -2773,7 +2839,7 @@ export default function AdminPage() {
                           <thead>
                             <tr className="border-b border-gray-100 bg-orange-50">
                               <th className="px-2 py-2 text-left font-bold text-gray-600" style={{ width: 96 }}>講師</th>
-                              {SUMMER_SLOTS.map(s => (
+                              {applySlotList.map(s => (
                                 <th key={s.slot} className="px-2 py-2 text-center whitespace-nowrap border-l border-gray-100">
                                   <div className="font-bold" style={{ color: isMainSlotOnDate(mapDate, s.slot) ? ORANGE : '#9ca3af' }}>
                                     {s.label} {isMainSlotOnDate(mapDate, s.slot) ? 'メイン' : '予備'}
@@ -2786,7 +2852,7 @@ export default function AdminPage() {
                           <tbody>
                             {dayTeachers.length === 0 ? (
                               <tr>
-                                <td colSpan={1 + SUMMER_SLOTS.length} className="px-4 py-10 text-center text-gray-400">
+                                <td colSpan={1 + applySlotList.length} className="px-4 py-10 text-center text-gray-400">
                                   この日に出られる講師・担当のある講師はいません
                                 </td>
                               </tr>
@@ -2799,7 +2865,7 @@ export default function AdminPage() {
                                         {t.name}
                                       </td>
                                     )}
-                                    {SUMMER_SLOTS.map(s => {
+                                    {applySlotList.map(s => {
                                       const conf = availMap.get(`${t.id}_${mapDate}_${s.slot}`)
                                       const assigned = assignedMap.get(`${t.id}_${mapDate}_${s.slot}`) ?? []
                                       const isAvail = conf !== undefined
@@ -2854,7 +2920,7 @@ export default function AdminPage() {
                             {/* 担当未定の生徒 */}
                             <tr className="border-t-2 border-gray-200" style={{ backgroundColor: '#FEF2F2' }}>
                               <td className="px-2 py-2 font-bold align-top" style={{ color: '#B91C1C' }}>担当未定</td>
-                              {SUMMER_SLOTS.map(s => {
+                              {applySlotList.map(s => {
                                 const c = cellMap.get(`${mapDate}_${s.slot}`)
                                 const unassignedConfirmed = (c?.students ?? []).filter(x => x.is_confirmed && !x.assigned_teacher_id)
                                 const unconfirmed = (c?.students ?? []).filter(x => !x.is_confirmed)
@@ -2936,7 +3002,7 @@ export default function AdminPage() {
                       <thead>
                         <tr className="border-b border-gray-100 bg-orange-50">
                           <th className="px-3 py-2 text-left font-bold text-gray-600 whitespace-nowrap">日付</th>
-                          {SUMMER_SLOTS.map(s => (
+                          {applySlotList.map(s => (
                             <th key={s.slot} className="px-2 py-2 text-center whitespace-nowrap">
                               <div className="font-bold" style={{ color: isMainSlot(s.slot) ? ORANGE : '#9ca3af' }}>
                                 {s.label} {isMainSlot(s.slot) ? 'メイン' : '予備'}
@@ -2954,7 +3020,7 @@ export default function AdminPage() {
                             <Fragment key={ds}>
                               {sepLabel && (
                                 <tr>
-                                  <td colSpan={1 + SUMMER_SLOTS.length} className="px-3 py-2 text-center bg-gray-100 text-[11px] font-bold text-gray-500">
+                                  <td colSpan={1 + applySlotList.length} className="px-3 py-2 text-center bg-gray-100 text-[11px] font-bold text-gray-500">
                                     ━━ {sepLabel} ━━
                                   </td>
                                 </tr>
@@ -2964,7 +3030,7 @@ export default function AdminPage() {
                                   <span className="font-semibold">{fmtD(ds)}</span>
                                   <span className="ml-0.5 text-[10px]">({'日月火水木金土'[dow]})</span>
                                 </td>
-                                {SUMMER_SLOTS.map(s => {
+                                {applySlotList.map(s => {
                                   const c = cellMap.get(`${ds}_${s.slot}`)
                                   const st = statusOf(c)
                                   const style = STATUS_STYLE[st]

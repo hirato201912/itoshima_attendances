@@ -19,6 +19,11 @@ function formatDeadline(dateStr: string) {
   return `${d.getMonth() + 1}月${d.getDate()}日（${'日月火水木金土'[d.getDay()]}）`
 }
 
+function formatMonthDay(dateStr: string) {
+  const d = new Date(dateStr + 'T00:00:00')
+  return `${d.getMonth() + 1}/${d.getDate()}（${'日月火水木金土'[d.getDay()]}）`
+}
+
 function findClosedRange(period: SeasonPeriod, dateStr: string) {
   return period.closedRanges.find(r => dateStr >= r.start && dateStr <= r.end)
 }
@@ -347,6 +352,11 @@ export default function SeasonShiftPage({ seasonName, channelKey, period }: Prop
               提出締切：{formatDeadline(period.deadline)}
             </p>
           )}
+          {period.specialDays?.map(sd => (
+            <p key={sd.tag} className="text-sm font-bold mt-2 px-3 py-2 rounded-lg bg-orange-50 border border-orange-200" style={{ color: '#C2410C' }}>
+              {sd.dates.map(formatMonthDay).join('・')}{sd.note}
+            </p>
+          ))}
           {/* 状態の凡例 */}
           <div className="mt-3 flex items-center gap-3 text-[11px] text-gray-600 flex-wrap">
             <span className="inline-flex items-center gap-1">
@@ -432,6 +442,7 @@ export default function SeasonShiftPage({ seasonName, channelKey, period }: Prop
                 const dowColor = dow === 0 ? '#ef4444' : dow === 6 ? '#3b82f6' : '#374151'
                 const rowBg = dow === 0 ? '#FFFAFA' : dow === 6 ? '#F8FAFF' : undefined
                 const rowAllOn = slots.every(s => has(row.date, s.slot))
+                const specialTag = period.specialDays?.find(sd => sd.dates.includes(row.date))?.tag
                 return (
                   <div
                     key={row.date}
@@ -441,6 +452,9 @@ export default function SeasonShiftPage({ seasonName, channelKey, period }: Prop
                     <div className="w-14 shrink-0 text-sm tabular-nums" style={{ color: dowColor }}>
                       <span className="font-semibold">{dateLabel}</span>
                       <span className="ml-0.5 text-xs">({dayLabel})</span>
+                      {specialTag && (
+                        <span className="block text-[10px] font-bold leading-tight" style={{ color: '#C2410C' }}>{specialTag}</span>
+                      )}
                     </div>
                     {slots.map(s => {
                       const on = has(row.date, s.slot)

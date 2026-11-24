@@ -93,6 +93,8 @@ export type SeasonPeriod = {
   closedRanges: ReadonlyArray<{ start: string; end: string; label: string }>
   // 使う時間帯（省略時は SUMMER_SLOTS の全5コマ）
   slots?: ReadonlyArray<number>
+  // 特別な日のお知らせ（画面上部の注意書き＋日付の下の短い表示）
+  specialDays?: ReadonlyArray<{ dates: ReadonlyArray<string>; tag: string; note: string }>
 }
 
 export function seasonSlots(period: SeasonPeriod) {
@@ -113,27 +115,91 @@ export const SUMMER_PERIOD = {
 
 // 冬期講習：期間定義（講師シフト用）。時間帯は②〜⑤（①は夏期で使わなかったため除外）、土日も提出対象
 // シフト保存先は夏期講習と同じ juku_summer_availability（日付範囲で区別する）
+// 12/29・30 は講師が集まらなかったため休み（2026-11-13 決定）
 export const WINTER_PERIOD = {
   start: '2026-12-24',
   end: '2027-01-07',
   includeWeekends: true,
   deadline: '2026-11-10',
   slots: [2, 3, 4, 5],
+  specialDays: [
+    { dates: ['2026-12-28'], tag: '中3講座', note: 'は②・③で中3向けの特別講座（少人数）を行います。' },
+  ],
   closedRanges: [
     { start: '2026-12-26', end: '2026-12-27', label: '休校日' },
-    { start: '2026-12-31', end: '2027-01-03', label: '年末年始休み' },
+    { start: '2026-12-29', end: '2027-01-03', label: '年末年始休み' },
   ],
 } as const
 
-// 保護者向け申込フォーム用の期間（夏期講習の実施期間）
-// 講師シフトの期間とは別管理：保護者からは8月分のみを対象に申込を受け付ける
-export const SUMMER_APPLY_PERIOD = {
+// 保護者向け申込フォーム用の期間（講師シフトの期間とは別管理）
+export type ApplyPeriod = {
+  start: string
+  end: string
+  includeWeekends: boolean
+  closedRanges: ReadonlyArray<{ start: string; end: string; label: string }>
+  // 申込フォーム・管理画面で扱う時間帯
+  slots: ReadonlyArray<number>
+}
+
+// 夏期講習：保護者からは8月分のみを対象に申込を受け付ける
+export const SUMMER_APPLY_PERIOD: ApplyPeriod = {
   start: '2026-08-03',
   end: '2026-08-28',
+  includeWeekends: false,
   closedRanges: [
     { start: '2026-08-08', end: '2026-08-16', label: 'お盆休み' },
   ],
+  slots: [1, 2, 3, 4, 5],
+}
+
+// 冬期講習：メインは②・③、④・⑤は予備
+export const WINTER_APPLY_PERIOD: ApplyPeriod = {
+  start: '2026-12-24',
+  end: '2027-01-07',
+  includeWeekends: true,
+  closedRanges: [
+    { start: '2026-12-26', end: '2026-12-27', label: '休校日' },
+    { start: '2026-12-29', end: '2027-01-03', label: '年末年始休み' },
+  ],
+  slots: [2, 3, 4, 5],
+}
+
+// 申込期間の日付一覧（土日・休校区間を除く）
+export function applyDates(period: ApplyPeriod): string[] {
+  const out: string[] = []
+  const start = new Date(period.start + 'T00:00:00')
+  const end = new Date(period.end + 'T00:00:00')
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dow = d.getDay()
+    if (!period.includeWeekends && (dow === 0 || dow === 6)) continue
+    const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    if (period.closedRanges.some(r => ds >= r.start && ds <= r.end)) continue
+    out.push(ds)
+  }
+  return out
+}
+
+// 冬期講習：中3向け特別講座（少人数・1コマ1,100円税込）。個別のコマとは別扱いで、片方だけでも選べる。
+// ②＝国語（作文）、③＝英語（英作文）
+// 中3はこの日時を個別のコマとしては選べない（中3以外は個別で選べる）
+export const WINTER_SPECIAL_COURSE = {
+  grade: '中3',
+  date: '2026-12-28',
+  slots: [2, 3],
+  pricePerSlot: 1100,
 } as const
+
+// 中3特別講座のコマごとの科目・テーマ（保護者画面・管理画面で共通）
+export const WINTER_SPECIAL_TOPICS: Readonly<Record<number, { subject: string; theme: string }>> = {
+  2: { subject: '国語', theme: '作文' },
+  3: { subject: '英語', theme: '英作文' },
+}
+
+// 冬期講習：保護者が選べない日時（講師が確保できないため）
+export const WINTER_UNAVAILABLE_SLOTS: Readonly<Record<string, ReadonlyArray<number>>> = {
+  '2026-12-24': [4, 5],
+  '2026-12-25': [4, 5],
+}
 
 // メインの時間帯は②・③。ただし下記の日付は全時間帯を「予備」として運用する
 export const RESERVE_ONLY_DATES: ReadonlyArray<string> = [
@@ -142,10 +208,7 @@ export const RESERVE_ONLY_DATES: ReadonlyArray<string> = [
 ]
 
 // 下記の日付はメインの時間帯を個別に指定する
-export const MAIN_SLOTS_BY_DATE: Readonly<Record<string, ReadonlyArray<number>>> = {
-  '2026-12-29': [2, 3, 4, 5],
-  '2026-12-30': [2, 3, 4, 5],
-}
+export const MAIN_SLOTS_BY_DATE: Readonly<Record<string, ReadonlyArray<number>>> = {}
 
 export function isMainSlotOnDate(date: string, slot: number): boolean {
   if (RESERVE_ONLY_DATES.includes(date)) return false
@@ -175,6 +238,10 @@ export type ApplyGrade = typeof APPLY_GRADES[number]
 
 export type SummerApply = {
   id: string
+  // 'summer' | 'winter'（既存の申込は 'summer'）
+  season: string
+  // 冬期講習の中3特別講座で選んだ時間帯（例：[2, 3]）。なければ null
+  special_slots: number[] | null
   student_name: string
   grade: string | null
   course: string | null
