@@ -336,7 +336,7 @@ export default function WinterApplyPage() {
                   <div className="text-base font-bold" style={{ color: ORANGE }}>
                     {Array.from(special).sort((a, b) => a - b).map(s => {
                       const info = slotInfo(s)
-                      return `${SPECIAL_TOPICS[s].subject}の${SPECIAL_TOPICS[s].theme}（${info.start}〜${info.end}）`
+                      return `入試${SPECIAL_TOPICS[s].subject} ${SPECIAL_TOPICS[s].theme}（${info.start}〜${info.end}）`
                     }).join(' ／ ')}
                     <span className="ml-2 text-sm text-gray-700 tabular-nums">
                       {special.size}講座・{(special.size * SPECIAL_PRICE).toLocaleString()}円（税込・教材費込み）
@@ -485,10 +485,10 @@ export default function WinterApplyPage() {
         <section className="bg-white rounded-2xl shadow-sm px-4 py-3">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[11px] font-bold px-2 py-0.5 rounded text-white" style={{ backgroundColor: ORANGE }}>中3生</span>
-            <h2 className="text-sm font-bold text-gray-800">受験生向け 特別講座</h2>
+            <h2 className="text-sm font-bold text-gray-800">高校入試対策 特別講座</h2>
           </div>
           <p className="text-xs text-gray-700 leading-relaxed">
-            {SPECIAL_DATE_LABEL}に、入試の「書く」問題（作文・英作文）に絞った講座を行います。
+            {SPECIAL_DATE_LABEL}に、高校入試の国語「作文問題」と英語「英作文問題」の得点力を伸ばす対策講座を行います。
             下の「学年」で中3を選ぶと、内容とお申込み欄が表示されます。
           </p>
         </section>
@@ -586,10 +586,10 @@ export default function WinterApplyPage() {
         {isJ3 && (
           <section className="bg-white rounded-2xl shadow-sm px-4 py-4 border-2" style={{ borderColor: ORANGE }}>
             <label className="block text-sm font-bold text-gray-800 mb-1">
-              中3特別講座<span className="ml-2 font-normal text-gray-600">{SPECIAL_DATE_LABEL}</span>
+              中3 高校入試対策 特別講座<span className="ml-2 font-normal text-gray-600">{SPECIAL_DATE_LABEL}</span>
             </label>
             <p className="text-xs text-gray-700 mb-3 leading-relaxed">
-              入試で差がつきやすい「書く」問題に絞った講座です。白紙で終わらせず、点につなげる書き方を練習します。
+              高校入試で差がつきやすい、国語の作文問題と英語の英作文問題の対策講座です。白紙で終わらせず、点につなげる書き方を練習します。
               公立高校入試向けですが、私立志望の方にも役立つ内容です。
             </p>
             <p className="text-xs font-bold text-gray-800 mb-2">受けたい講座をタップしてください（両方でも、片方だけでもかまいません）</p>
@@ -607,7 +607,8 @@ export default function WinterApplyPage() {
                       ? { backgroundColor: ORANGE, borderColor: ORANGE, color: 'white' }
                       : { backgroundColor: 'white', borderColor: '#FDBA74', color: '#C2410C' }}
                   >
-                    <span className="block text-base">{on ? '✓ ' : ''}{SPECIAL_TOPICS[s].subject}の{SPECIAL_TOPICS[s].theme}</span>
+                    <span className="block text-base">{on ? '✓ ' : ''}入試{SPECIAL_TOPICS[s].subject}</span>
+                    <span className="block text-sm">{SPECIAL_TOPICS[s].theme}</span>
                     <span className="block text-[11px] font-normal tabular-nums">{info.start}〜{info.end}</span>
                   </button>
                 )

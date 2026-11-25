@@ -180,7 +180,7 @@ export function applyDates(period: ApplyPeriod): string[] {
 }
 
 // 冬期講習：中3向け特別講座（少人数・1コマ1,100円税込）。個別のコマとは別扱いで、片方だけでも選べる。
-// ②＝国語（作文）、③＝英語（英作文）
+// ②＝入試国語（作文問題対策）、③＝入試英語（英作文問題対策）
 // 中3はこの日時を個別のコマとしては選べない（中3以外は個別で選べる）
 export const WINTER_SPECIAL_COURSE = {
   grade: '中3',
@@ -191,8 +191,8 @@ export const WINTER_SPECIAL_COURSE = {
 
 // 中3特別講座のコマごとの科目・テーマ（保護者画面・管理画面で共通）
 export const WINTER_SPECIAL_TOPICS: Readonly<Record<number, { subject: string; theme: string }>> = {
-  2: { subject: '国語', theme: '作文' },
-  3: { subject: '英語', theme: '英作文' },
+  2: { subject: '国語', theme: '作文問題対策' },
+  3: { subject: '英語', theme: '英作文問題対策' },
 }
 
 // 冬期講習：保護者が選べない日時（講師が確保できないため）

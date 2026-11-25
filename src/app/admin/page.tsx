@@ -49,10 +49,10 @@ const SUBJECT_LABEL: Record<string, string> = Object.fromEntries(SUBJECT_OPTIONS
 
 const ORANGE = '#FF7F00'
 
-// 中3特別講座（冬期）の講座名。例：国語（作文）
+// 中3特別講座（冬期）の講座名。例：入試国語（作文問題対策）
 const specialTopicName = (n: number) => {
   const t = WINTER_SPECIAL_TOPICS[n]
-  return t ? `${t.subject}（${t.theme}）` : `${n}`
+  return t ? `入試${t.subject}（${t.theme}）` : `${n}`
 }
 // 申込ごとの選択を「国語・英語」のように表示
 const specialLabel = (slots: number[] | null) =>
