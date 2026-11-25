@@ -28,6 +28,8 @@ const VISIBLE_CLOSED_RANGES = WINTER_APPLY_PERIOD.closedRanges.filter(r => !HIDD
 
 const COURSE_STANDARD = '標準コース'
 const COURSE_REQUIRED = '必修コース'
+// 中3のみ。冬期講習のコースは受けず、特別講座だけを申し込む（希望日時は不要）
+const COURSE_SPECIAL_ONLY = '特別講座のみ'
 
 const PRICE_TABLE: ReadonlyArray<{ grade: string; standard: number }> = [
   { grade: '小学生', standard: 12080 },
@@ -162,6 +164,7 @@ export default function WinterApplyPage() {
     setSpecial(next)
   }
 
+  const specialOnly = isJ3 && course === COURSE_SPECIAL_ONLY
   const courseSessions = COURSES.find(c => c.name === course)?.sessions
   const mainCount = Array.from(selected).filter(k => {
     const [d, sl] = k.split('_')
@@ -183,7 +186,11 @@ export default function WinterApplyPage() {
       setError('希望コースを選んでください')
       return
     }
-    if (selected.size === 0) {
+    if (specialOnly && special.size === 0) {
+      setError('受けたい特別講座を1つ以上選んでください')
+      return
+    }
+    if (!specialOnly && selected.size === 0) {
       setError('希望の日・時間帯を1つ以上選んでください')
       return
     }
@@ -214,17 +221,20 @@ export default function WinterApplyPage() {
       return
     }
 
-    const slotRows = Array.from(selected).map(key => {
-      const [date, slotStr] = key.split('_')
-      return { apply_id: applyRow.id, date, slot: parseInt(slotStr) }
-    })
-    const { error: slotErr } = await supabase.from('juku_summer_apply_slots').insert(slotRows)
-
-    setSubmitting(false)
-    if (slotErr) {
-      setError('コマの保存に失敗しました。お手数ですが再度送信をお願いします。')
-      return
+    // 特別講座のみの申込には希望コマがない
+    if (!specialOnly) {
+      const slotRows = Array.from(selected).map(key => {
+        const [date, slotStr] = key.split('_')
+        return { apply_id: applyRow.id, date, slot: parseInt(slotStr) }
+      })
+      const { error: slotErr } = await supabase.from('juku_summer_apply_slots').insert(slotRows)
+      if (slotErr) {
+        setSubmitting(false)
+        setError('コマの保存に失敗しました。お手数ですが再度送信をお願いします。')
+        return
+      }
     }
+    setSubmitting(false)
     setDone(true)
     if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -349,6 +359,7 @@ export default function WinterApplyPage() {
             )}
           </section>
 
+          {!specialOnly && (
           <section className="bg-white rounded-2xl shadow-sm px-4 py-4">
             <div className="flex items-baseline justify-between mb-3">
               <div className="text-sm font-bold text-gray-800">希望の日・時間帯</div>
@@ -391,6 +402,7 @@ export default function WinterApplyPage() {
               ))}
             </div>
           </section>
+          )}
 
           <section className="bg-white rounded-2xl shadow-sm px-4 py-4">
             <div className="text-xs text-gray-500 mb-1">ご要望・受けたい科目など</div>
@@ -654,11 +666,32 @@ export default function WinterApplyPage() {
                   </button>
                 )
               })}
+              {isJ3 && (
+                <button
+                  type="button"
+                  onClick={() => setCourse(COURSE_SPECIAL_ONLY)}
+                  className="flex items-center justify-between px-4 py-3 rounded-xl border-2 text-sm font-bold transition-colors active:scale-[0.98]"
+                  style={specialOnly
+                    ? { backgroundColor: '#FFF7ED', borderColor: ORANGE, color: ORANGE }
+                    : { backgroundColor: 'white', borderColor: '#e5e7eb', color: '#4b5563' }}
+                >
+                  <span>{COURSE_SPECIAL_ONLY}</span>
+                  <span className="tabular-nums" style={{ color: specialOnly ? ORANGE : '#374151' }}>
+                    1講座 {SPECIAL_PRICE.toLocaleString()}円
+                  </span>
+                </button>
+              )}
             </div>
+          )}
+          {specialOnly && (
+            <p className="text-xs text-gray-600 mt-2 leading-relaxed">
+              上の「中3 高校入試対策 特別講座」で、受けたい講座をお選びください。希望の日・時間帯の入力は不要です。
+            </p>
           )}
         </section>
 
-        {/* 希望の日・時間帯 */}
+        {/* 希望の日・時間帯（特別講座のみの場合は不要） */}
+        {!specialOnly && (
         <section className="bg-white rounded-2xl shadow-sm px-4 py-4">
           <label className="block text-sm font-bold text-gray-800 mb-2">
             希望の日・時間帯
@@ -824,6 +857,7 @@ export default function WinterApplyPage() {
             <span className="ml-2 text-[11px] text-gray-500">（合計 {selected.size} コマ）</span>
           </p>
         </section>
+        )}
 
         {/* 要望 */}
         <section className="bg-white rounded-2xl shadow-sm px-4 py-4">
